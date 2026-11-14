@@ -14,7 +14,7 @@ PERSONALITY:
 HISTORICAL HONESTY:
 - You are an AI-created educational persona inspired by historical context. You are NOT Sheikh Mujibur Rahman, cannot claim to be him, cannot claim his private thoughts, and do not speak on his behalf.
 - If asked whether you are the real Bangabandhu, clearly say no: you are Bongoboltu AI, an AI simulation.
-- Discuss Sheikh Mujibur Rahman's life and legacy with historical nuance. Do not present disputed political interpretations as universally agreed facts. Distinguish documented facts, interpretations, and uncertainty.
+- Discuss Sheikh Mujibur Rahman's life and legacy with historical nuance. Distinguish documented facts, interpretations, and uncertainty.
 - Never fabricate quotations, dates, sources, personal memories, or historical events. If unsure, say so.
 - Do not claim to have lived through events or personally met historical figures.
 - Be open to questions about achievements, controversies, criticism, and differing historical perspectives. Do not blindly praise or attack any political figure or party.
@@ -25,76 +25,62 @@ Keep answers useful and naturally sized. For Bangla, use clear, natural Bengali 
 
 const PRIMARY_MODEL = "gemini-3.8-flash";
 const FALLBACK_MODEL = "gemini-3.5-flash-lite";
-const MAX_RETRIES_PER_MODEL = 1;
+const REQUEST_TIMEOUT_MS = 9000;
 
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-function isRetryableStatus(status) {
+function isTemporary(status) {
   return status === 500 || status === 502 || status === 503 || status === 504;
 }
 
-async function requestGemini(model, apiKey, contents, language) {
-  const endpoint =
-    "https://generativelanguage.googleapis.com/v1beta/models/" +
-    model +
-    ":generateContent?key=" +
-    encodeURIComponent(apiKey);
+async function callModel(model, apiKey, contents, language) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const url = "https://generativelanguage.googleapis.com/v1beta/models/" +
+    model + ":generateContent";
 
-  for (let attempt = 0; attempt <= MAX_RETRIES_PER_MODEL; attempt++) {
-    let response;
-    let data;
-
-    try {
-      response = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          systemInstruction: {
-            parts: [{ text: SYSTEM_PROMPT + "\n\nLANGUAGE PREFERENCE: " + language }]
-          },
-          contents,
-          generationConfig: { maxOutputTokens: 1200 }
-        })
-      });
-
-      data = await response.json().catch(() => ({}));
-    } catch (error) {
-      console.error("Gemini network error:", {
-        model,
-        attempt: attempt + 1,
-        message: error && error.message ? error.message : "Unknown network error"
-      });
-
-      if (attempt < MAX_RETRIES_PER_MODEL) {
-        await sleep(500 * (attempt + 1));
-        continue;
-      }
-      return { ok: false, status: 502, data: {} };
-    }
-
-    if (response.ok) return { ok: true, status: response.status, data };
-
-    const providerError = data && data.error ? data.error : {};
-    console.error("Gemini API error:", {
-      model,
-      attempt: attempt + 1,
-      code: providerError.code || response.status,
-      status: providerError.status || response.statusText,
-      message: providerError.message || "No error message returned"
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": apiKey
+      },
+      signal: controller.signal,
+      body: JSON.stringify({
+        systemInstruction: {
+          parts: [{ text: SYSTEM_PROMPT + "\n\nLANGUAGE PREFERENCE: " + language }]
+        },
+        contents,
+        generationConfig: {
+          maxOutputTokens: 4096,
+          thinkingConfig: {
+            thinkingLevel: model === PRIMARY_MODEL ? "low" : "minimal"
+          }
+        }
+      })
     });
 
-    if (!isRetryableStatus(response.status) || attempt === MAX_RETRIES_PER_MODEL) {
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const err = data.error || {};
+      console.error("Gemini response error", {
+        model,
+        code: err.code || response.status,
+        status: err.status || response.statusText,
+        message: err.message || "No provider message"
+      });
       return { ok: false, status: response.status, data };
     }
-
-    const retryAfterSeconds = Number(response.headers.get("retry-after"));
-    const delayMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
-      ? Math.min(retryAfterSeconds * 1000, 3000)
-      : 500 * (attempt + 1);
-    await sleep(delayMs);
+    return { ok: true, status: response.status, data };
+  } catch (error) {
+    const timedOut = error && error.name === "AbortError";
+    console.error("Gemini request failed", {
+      model,
+      reason: timedOut ? "Request timed out" : (error.message || "Network error")
+    });
+    return { ok: false, status: timedOut ? 504 : 502, data: {} };
+  } finally {
+    clearTimeout(timeout);
   }
-
-  return { ok: false, status: 502, data: {} };
 }
 
 module.exports = async function handler(req, res) {
@@ -108,7 +94,7 @@ module.exports = async function handler(req, res) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     return res.status(503).json({
-      error: "Bongoboltu AI needs its Gemini API key configured on the server."
+      error: "GEMINI_API_KEY is missing from the Vercel server environment."
     });
   }
 
@@ -119,16 +105,16 @@ module.exports = async function handler(req, res) {
       return res.status(400).json({ error: "Send a message first." });
     }
 
-    const cleaned = messages.slice(-20).map((message) => ({
-      role: message.role === "assistant" ? "model" : "user",
+    const contents = messages.slice(-20).map((message) => ({
+      role: message.role === "assistant" || message.role === "model" ? "model" : "user",
       parts: [{ text: String(message.content || "").slice(0, 6000) }]
     })).filter((message) => message.parts[0].text.trim());
 
-    if (!cleaned.length || cleaned[cleaned.length - 1].role !== "user") {
+    if (!contents.length || contents[contents.length - 1].role !== "user") {
       return res.status(400).json({ error: "The last message must be from the user." });
     }
 
-    const latest = cleaned[cleaned.length - 1].parts[0].text.toLowerCase();
+    const latest = contents[contents.length - 1].parts[0].text.toLowerCase();
     const asksCreator = /(who (made|created|built|developed) you|who is your (creator|developer)|who made bongoboltu|তোমাকে কে (বানিয়েছে|তৈরি করেছে)|কে তোমাকে তৈরি করেছে|তোমার স্রষ্টা কে|কে বানাইছে)/i.test(latest);
 
     if (asksCreator) {
@@ -141,79 +127,65 @@ module.exports = async function handler(req, res) {
       ? "Bangla only"
       : body.language === "en"
         ? "English only"
-        : "Respond naturally in the language used by the user; Bangla and English are both supported. If the user mixes them, you may mix naturally.";
+        : "Reply naturally in the language used by the user. Support Bangla, Banglish and English.";
 
-    let result = await requestGemini(PRIMARY_MODEL, apiKey, cleaned, language);
-    let usedModel = PRIMARY_MODEL;
+    let result = await callModel(PRIMARY_MODEL, apiKey, contents, language);
+    let modelUsed = PRIMARY_MODEL;
 
-    // Only try the fallback when the primary model has a temporary availability failure.
-    if (!result.ok && isRetryableStatus(result.status)) {
-      console.warn("Primary Gemini model unavailable; trying fallback:", FALLBACK_MODEL);
-      result = await requestGemini(FALLBACK_MODEL, apiKey, cleaned, language);
-      usedModel = FALLBACK_MODEL;
+    if (!result.ok && isTemporary(result.status)) {
+      console.warn("Primary Gemini model unavailable; trying fallback", FALLBACK_MODEL);
+      result = await callModel(FALLBACK_MODEL, apiKey, contents, language);
+      modelUsed = FALLBACK_MODEL;
     }
 
     if (!result.ok) {
       const providerError = result.data && result.data.error ? result.data.error : {};
-
       if (result.status === 429) {
         return res.status(429).json({
-          error: "Gemini's request limit has been reached. Please wait a little and try again."
+          error: "Gemini rate limit reached. Please wait briefly and try again."
         });
       }
-
       if (result.status === 400) {
         return res.status(400).json({
-          error: "Gemini could not process this message. Please try rephrasing it."
+          error: "Gemini rejected this request. Please try a shorter or differently worded message."
         });
       }
-
       if (result.status === 401 || result.status === 403) {
-        console.error("Gemini authentication or permission failure:", {
-          code: providerError.code || result.status,
-          status: providerError.status || "",
-          message: providerError.message || "No provider message"
-        });
         return res.status(502).json({
-          error: "Gemini rejected the server credentials or API permissions. Check the GEMINI_API_KEY environment variable."
+          error: "Gemini rejected the API key or its permissions. Check GEMINI_API_KEY in Vercel."
         });
       }
-
-      if (isRetryableStatus(result.status)) {
-        return res.status(503).json({
-          error: "Gemini is temporarily busy. Bongoboltu tried again, but the AI service is still unavailable. Please try again shortly."
-        });
-      }
-
-      console.error("Gemini request failed:", {
-        model: usedModel,
-        code: providerError.code || result.status,
-        status: providerError.status || "",
-        message: providerError.message || "No provider message"
+      console.error("Both Gemini model attempts failed", {
+        model: modelUsed,
+        status: result.status,
+        message: providerError.message || "No provider error body"
       });
-      return res.status(502).json({
-        error: "The AI provider could not complete the request. Please try again."
+      return res.status(503).json({
+        error: "Gemini is temporarily unavailable. Please try again in a moment."
       });
     }
 
-    const reply = result.data.candidates?.[0]?.content?.parts
-      ?.map((part) => part.text || "")
-      .join("")
-      .trim();
+    const candidate = result.data.candidates && result.data.candidates[0];
+    const reply = candidate && candidate.content && Array.isArray(candidate.content.parts)
+      ? candidate.content.parts.map((part) => part.text || "").join("").trim()
+      : "";
 
     if (!reply) {
-      const finishReason = result.data.candidates?.[0]?.finishReason;
-      console.error("Gemini returned no text:", { model: usedModel, finishReason });
+      console.error("Gemini returned no text", {
+        model: modelUsed,
+        finishReason: candidate && candidate.finishReason,
+        promptFeedback: result.data.promptFeedback || null
+      });
       return res.status(502).json({
-        error: "Gemini returned an empty response. Please try again."
+        error: "Gemini returned no answer. Please try again."
       });
     }
 
     return res.status(200).json({ reply });
   } catch (error) {
-    console.error("Bongoboltu API error:", error);
+    console.error("Bongoboltu API handler error:", error);
     return res.status(500).json({
-      error: "Something went wrong while contacting the AI. Please try again."
+      error: "The chat server encountered an unexpected error."
     });
   }
 };
