@@ -32,7 +32,6 @@ Keep answers useful and naturally sized. For Bangla, use clear, natural Bengali 
 `;
 
 const PRIMARY_MODEL = "gemini-3.8-flash";
-const FALLBACK_MODEL = "gemini-3.5-flash-lite";
 const REQUEST_TIMEOUT_MS = 9000;
 const MAX_MESSAGES = 20;
 const MAX_MESSAGE_CHARS = 6000;
@@ -72,7 +71,10 @@ function normalizeMessages(messages) {
 }
 
 function shouldTryFallback(status) {
-  return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+  // Retry through the independent provider for transient failures and broken
+  // primary credentials/model configuration. Request validation happens before
+  // provider calls, so these statuses are safe to fail over.
+  return [400, 401, 403, 404, 408, 429, 500, 502, 503, 504].includes(status);
 }
 
 async function callGrok(apiKey, contents, language) {
@@ -276,14 +278,33 @@ module.exports = async function handler(req, res) {
       });
     }
 
-    const candidate = providerUsed === "Gemini" && result.data && Array.isArray(result.data.candidates)
+    let candidate = providerUsed === "Gemini" && result.data && Array.isArray(result.data.candidates)
       ? result.data.candidates[0]
       : null;
-    const reply = providerUsed === "Grok"
+    let reply = providerUsed === "Grok"
       ? (result.data.reply || "")
       : candidate && candidate.content && Array.isArray(candidate.content.parts)
         ? candidate.content.parts.map((part) => typeof part.text === "string" ? part.text : "").join("").trim()
         : "";
+
+    // A successful HTTP response can still contain no usable text. In that
+    // case, silently retry with Grok unless Gemini explicitly safety-blocked it.
+    const initialBlockReason = providerUsed === "Gemini" && result.data && result.data.promptFeedback
+      ? result.data.promptFeedback.blockReason
+      : null;
+    const initialFinishReason = candidate && candidate.finishReason;
+    const wasSafetyBlocked = initialBlockReason ||
+      initialFinishReason === "SAFETY" ||
+      initialFinishReason === "RECITATION" ||
+      initialFinishReason === "BLOCKLIST";
+
+    if (!reply && providerUsed === "Gemini" && !wasSafetyBlocked && process.env.XAI_API_KEY) {
+      console.warn("Gemini returned no usable text; attempting independent fallback");
+      result = await callGrok(process.env.XAI_API_KEY, contents, language);
+      providerUsed = "Grok";
+      reply = result.ok && result.data ? (result.data.reply || "") : "";
+      candidate = null;
+    }
 
     if (!reply) {
       const blockReason = providerUsed === "Gemini" && result.data && result.data.promptFeedback
