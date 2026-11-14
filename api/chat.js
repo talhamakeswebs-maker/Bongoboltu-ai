@@ -126,8 +126,12 @@ async function callGrok(apiKey, contents, language) {
       const err = data.error || data;
       console.error("Grok response error", {
         httpStatus: response.status,
-        code: err.code || err.type || null,
-        message: err.message || err.detail || data.message || data.rawError || "Provider returned an empty error body",
+        code: err.code || err.type || (Array.isArray(data.errors) && data.errors[0] ? data.errors[0].code : null) || null,
+        message: err.message || err.detail || data.message || data.rawError ||
+          (Array.isArray(data.errors) && data.errors[0] ? data.errors[0].message : null) ||
+          "Provider returned an empty error body",
+        providerErrors: Array.isArray(data.errors) ? data.errors : undefined,
+        responseBody: rawBody.slice(0, 1200),
         requestId: response.headers.get("request-id") || response.headers.get("x-request-id") || null,
         contentType: response.headers.get("content-type") || null,
         contentLength: response.headers.get("content-length") || null,
