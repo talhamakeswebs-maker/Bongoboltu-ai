@@ -39,7 +39,7 @@ Keep answers useful and naturally sized. For Bangla, use clear, natural Bengali 
 `;
 
 const PRIMARY_MODEL = "gemini-3.8-flash";
-const REQUEST_TIMEOUT_MS = 45000;
+const REQUEST_TIMEOUT_MS = 9000;\nconst TOTAL_PROVIDER_BUDGET_MS = 30000;
 const MAX_MESSAGES = 20;
 const MAX_MESSAGE_CHARS = 6000;
 const MAX_TOTAL_INPUT_CHARS = 48000;
@@ -193,28 +193,30 @@ module.exports = async function handler(req, res) {
 
     const modelCandidates = [
       PRIMARY_MODEL,
+      "gemini-3.6-flash",
       "gemini-3.5-flash",
       "gemini-3.5-flash-lite"
     ];
 
     let result = { ok: false, status: 503, data: {} };
     let providerUsed = "Gemini";
-    let successfulModel = null;
+    const providerStartedAt = Date.now();
 
     for (const model of modelCandidates) {
       for (const keyCandidate of keyCandidates) {
-        result = await callModel(model, keyCandidate.key, contents, language);
-        providerUsed = keyCandidate.name + " (" + model + ")";
-        if (result.ok) {
-          successfulModel = model;
+        if (Date.now() - providerStartedAt >= TOTAL_PROVIDER_BUDGET_MS) {
+          console.warn("Gemini failover time budget reached; stopping retries");
           break;
         }
+        result = await callModel(model, keyCandidate.key, contents, language);
+        providerUsed = keyCandidate.name + " (" + model + ")";
+        if (result.ok) break;
         console.warn("Gemini route unavailable; trying next route", {
           provider: providerUsed,
           status: result.status
         });
       }
-      if (result.ok) break;
+      if (result.ok || Date.now() - providerStartedAt >= TOTAL_PROVIDER_BUDGET_MS) break;
     }
 
     if (!result.ok) {
