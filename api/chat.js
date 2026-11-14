@@ -105,9 +105,9 @@ async function callModel(model, apiKey, contents, language) {
         contents,
         generationConfig: {
           maxOutputTokens: 4096,
-          thinkingConfig: {
-            thinkingLevel: model === PRIMARY_MODEL ? "low" : "minimal"
-          }
+          ...(model === PRIMARY_MODEL
+            ? { thinkingConfig: { thinkingLevel: "low" } }
+            : {})
         }
       })
     });
