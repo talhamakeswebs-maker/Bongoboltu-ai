@@ -35,8 +35,8 @@ const PRIMARY_MODEL = "gemini-3.8-flash";
 const FALLBACK_MODEL = "gemini-3.5-flash-lite";
 const REQUEST_TIMEOUT_MS = 9000;
 
-function isTemporary(status) {
-  return status === 500 || status === 502 || status === 503 || status === 504;
+function shouldTryFallback(status) {
+  return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
 }
 
 async function callModel(model, apiKey, contents, language) {
@@ -143,8 +143,12 @@ module.exports = async function handler(req, res) {
     let result = await callModel(PRIMARY_MODEL, apiKey, contents, language);
     let modelUsed = PRIMARY_MODEL;
 
-    if (!result.ok && isTemporary(result.status)) {
-      console.warn("Primary Gemini model unavailable; trying fallback", FALLBACK_MODEL);
+    if (!result.ok && shouldTryFallback(result.status)) {
+      console.warn("Primary Gemini model unavailable or quota-limited; trying fallback", {
+        primaryModel: PRIMARY_MODEL,
+        fallbackModel: FALLBACK_MODEL,
+        primaryStatus: result.status
+      });
       result = await callModel(FALLBACK_MODEL, apiKey, contents, language);
       modelUsed = FALLBACK_MODEL;
     }
@@ -169,7 +173,7 @@ module.exports = async function handler(req, res) {
           error: "My backstage pass isn't working. The server boss needs to check the API key."
         });
       }
-      console.error("Both Gemini model attempts failed", {
+      console.error("Gemini model attempts failed", {
         model: modelUsed,
         status: result.status,
         message: providerError.message || "No provider error body"
