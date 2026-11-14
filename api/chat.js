@@ -34,6 +34,42 @@ Keep answers useful and naturally sized. For Bangla, use clear, natural Bengali 
 const PRIMARY_MODEL = "gemini-3.8-flash";
 const FALLBACK_MODEL = "gemini-3.5-flash-lite";
 const REQUEST_TIMEOUT_MS = 9000;
+const MAX_MESSAGES = 20;
+const MAX_MESSAGE_CHARS = 6000;
+const MAX_TOTAL_INPUT_CHARS = 48000;
+
+function normalizeMessages(messages) {
+  if (!Array.isArray(messages)) return null;
+
+  const normalized = messages.slice(-MAX_MESSAGES).map((message) => {
+    if (!message || typeof message !== "object") return null;
+    if (message.role !== "user" && message.role !== "assistant" && message.role !== "model") return null;
+    if (typeof message.content !== "string") return null;
+
+    return {
+      role: message.role === "assistant" || message.role === "model" ? "model" : "user",
+      parts: [{ text: message.content.trim().slice(0, MAX_MESSAGE_CHARS) }]
+    };
+  }).filter((message) => message && message.parts[0].text);
+
+  if (!normalized.length) return [];
+
+  // Keep the newest complete messages within a bounded prompt budget.
+  const recent = [];
+  let remaining = MAX_TOTAL_INPUT_CHARS;
+  for (let i = normalized.length - 1; i >= 0; i--) {
+    const message = normalized[i];
+    const length = message.parts[0].text.length;
+    if (length > remaining) break;
+    recent.push(message);
+    remaining -= length;
+  }
+  recent.reverse();
+
+  // Gemini conversations must begin with a user turn.
+  if (recent.length && recent[0].role === "model") recent.shift();
+  return recent;
+}
 
 function shouldTryFallback(status) {
   return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
@@ -107,18 +143,14 @@ module.exports = async function handler(req, res) {
   }
 
   try {
-    const body = req.body || {};
-    const messages = Array.isArray(body.messages) ? body.messages : [];
-    if (!messages.length) {
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    if (!Array.isArray(body.messages) || !body.messages.length) {
       return res.status(400).json({ error: "Send a message first." });
     }
 
-    const contents = messages.slice(-20).map((message) => ({
-      role: message.role === "assistant" || message.role === "model" ? "model" : "user",
-      parts: [{ text: String(message.content || "").slice(0, 6000) }]
-    })).filter((message) => message.parts[0].text.trim());
+    const contents = normalizeMessages(body.messages);
 
-    if (!contents.length || contents[contents.length - 1].role !== "user") {
+    if (!contents || !contents.length || contents[contents.length - 1].role !== "user") {
       return res.status(400).json({ error: "The last message must be from the user." });
     }
 
@@ -183,17 +215,34 @@ module.exports = async function handler(req, res) {
       });
     }
 
-    const candidate = result.data.candidates && result.data.candidates[0];
+    const candidate = result.data && Array.isArray(result.data.candidates)
+      ? result.data.candidates[0]
+      : null;
     const reply = candidate && candidate.content && Array.isArray(candidate.content.parts)
-      ? candidate.content.parts.map((part) => part.text || "").join("").trim()
+      ? candidate.content.parts.map((part) => typeof part.text === "string" ? part.text : "").join("").trim()
       : "";
 
     if (!reply) {
-      console.error("Gemini returned no text", {
+      const blockReason = result.data && result.data.promptFeedback
+        ? result.data.promptFeedback.blockReason
+        : null;
+      const finishReason = candidate && candidate.finishReason;
+
+      console.warn("Gemini returned no usable text", {
         model: modelUsed,
-        finishReason: candidate && candidate.finishReason,
-        promptFeedback: result.data.promptFeedback || null
+        finishReason: finishReason || null,
+        blockReason: blockReason || null
       });
+
+      if (blockReason || finishReason === "SAFETY" || finishReason === "RECITATION" || finishReason === "BLOCKLIST") {
+        const blockedReply = body.language === "bn"
+          ? "এই প্রশ্নটার উত্তর দিতে পারছি না, bro. অন্যভাবে জিজ্ঞেস কর, দেখি কী করা যায়।"
+          : body.language === "en"
+            ? "I can't help with that exact request, bro. Try rephrasing it and I'll see what I can do."
+            : "Ei request-ta niye ektu jhamela hocche, bro. Onno bhabe jiggesh kor, dekhi ki kora jay.";
+        return res.status(200).json({ reply: blockedReply });
+      }
+
       return res.status(502).json({
         error: "My brain went blank for a second. Ask me again, bro."
       });
