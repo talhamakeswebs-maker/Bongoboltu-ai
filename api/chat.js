@@ -182,24 +182,39 @@ module.exports = async function handler(req, res) {
         ? "English only"
         : "Reply naturally in the language used by the user. Support Bangla, Banglish and English.";
 
-    // Gemini is the only provider. The backup key is used silently if the primary fails.
-    let result;
-    let providerUsed;
+    // Gemini is the only provider. Try the primary model with both keys,
+    // then use stable alternate Flash models if Gemini 3.8 is unavailable.
+    const keyCandidates = [
+      { key: apiKey, name: "Gemini primary" },
+      { key: backupApiKey, name: "Gemini backup" }
+    ].filter((item, index, all) =>
+      item.key && all.findIndex((candidate) => candidate.key === item.key) === index
+    );
 
-    if (apiKey) {
-      result = await callModel(PRIMARY_MODEL, apiKey, contents, language);
-      providerUsed = "Gemini primary";
-    } else {
-      result = await callModel(PRIMARY_MODEL, backupApiKey, contents, language);
-      providerUsed = "Gemini backup";
-    }
+    const modelCandidates = [
+      PRIMARY_MODEL,
+      "gemini-3.5-flash",
+      "gemini-3.5-flash-lite"
+    ];
 
-    if (!result.ok && shouldTryFallback(result.status) && providerUsed === "Gemini primary" && backupApiKey) {
-      console.warn("Primary Gemini key unavailable; attempting backup key", {
-        primaryStatus: result.status
-      });
-      result = await callModel(PRIMARY_MODEL, backupApiKey, contents, language);
-      providerUsed = "Gemini backup";
+    let result = { ok: false, status: 503, data: {} };
+    let providerUsed = "Gemini";
+    let successfulModel = null;
+
+    for (const model of modelCandidates) {
+      for (const keyCandidate of keyCandidates) {
+        result = await callModel(model, keyCandidate.key, contents, language);
+        providerUsed = keyCandidate.name + " (" + model + ")";
+        if (result.ok) {
+          successfulModel = model;
+          break;
+        }
+        console.warn("Gemini route unavailable; trying next route", {
+          provider: providerUsed,
+          status: result.status
+        });
+      }
+      if (result.ok) break;
     }
 
     if (!result.ok) {
