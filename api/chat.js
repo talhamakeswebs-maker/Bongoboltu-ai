@@ -39,7 +39,7 @@ Keep answers useful and naturally sized. For Bangla, use clear, natural Bengali 
 `;
 
 const PRIMARY_MODEL = "gemini-3.8-flash";
-const REQUEST_TIMEOUT_MS = 9000;
+const REQUEST_TIMEOUT_MS = 45000;
 const MAX_MESSAGES = 20;
 const MAX_MESSAGE_CHARS = 6000;
 const MAX_TOTAL_INPUT_CHARS = 48000;
@@ -208,9 +208,10 @@ module.exports = async function handler(req, res) {
   }
 
   const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
+  const xaiApiKey = xaiApiKey;
+  if (!apiKey && !xaiApiKey) {
     return res.status(503).json({
-      error: "GEMINI_API_KEY is missing from the Vercel server environment."
+      error: "No AI provider key is configured. Add XAI_API_KEY or GEMINI_API_KEY to the server environment."
     });
   }
 
@@ -244,15 +245,33 @@ module.exports = async function handler(req, res) {
         ? "English only"
         : "Reply naturally in the language used by the user. Support Bangla, Banglish and English.";
 
-    let result = await callModel(PRIMARY_MODEL, apiKey, contents, language);
-    let providerUsed = "Gemini";
+    // Prefer Grok when its key is configured. Gemini remains an independent
+    // fallback, so either provider can keep the chat available on its own.
+    let result;
+    let providerUsed;
 
-    if (!result.ok && shouldTryFallback(result.status) && process.env.XAI_API_KEY) {
-      console.warn("Gemini temporarily unavailable; attempting independent Grok fallback", {
-        primaryStatus: result.status
-      });
-      result = await callGrok(process.env.XAI_API_KEY, contents, language);
+    if (xaiApiKey) {
+      result = await callGrok(xaiApiKey, contents, language);
       providerUsed = "Grok";
+    } else {
+      result = await callModel(PRIMARY_MODEL, apiKey, contents, language);
+      providerUsed = "Gemini";
+    }
+
+    if (!result.ok && shouldTryFallback(result.status)) {
+      if (providerUsed === "Grok" && apiKey) {
+        console.warn("Grok unavailable; attempting Gemini fallback", {
+          primaryStatus: result.status
+        });
+        result = await callModel(PRIMARY_MODEL, apiKey, contents, language);
+        providerUsed = "Gemini";
+      } else if (providerUsed === "Gemini" && xaiApiKey) {
+        console.warn("Gemini unavailable; attempting Grok fallback", {
+          primaryStatus: result.status
+        });
+        result = await callGrok(xaiApiKey, contents, language);
+        providerUsed = "Grok";
+      }
     }
 
     if (!result.ok) {
@@ -266,8 +285,13 @@ module.exports = async function handler(req, res) {
         return res.status(200).json({ reply: limitReply });
       }
       if (result.status === 400) {
-        return res.status(400).json({
-          error: "That one broke my brain a little. Try asking it another way, bro."
+        console.error("Both configured AI routes rejected the request", {
+          provider: providerUsed,
+          status: result.status,
+          providerMessage: providerError.message || "No provider error body"
+        });
+        return res.status(502).json({
+          error: "My brain's connection is acting up. Give me a moment and try again, bro."
         });
       }
       if (result.status === 401 || result.status === 403) {
@@ -305,9 +329,9 @@ module.exports = async function handler(req, res) {
       initialFinishReason === "RECITATION" ||
       initialFinishReason === "BLOCKLIST";
 
-    if (!reply && providerUsed === "Gemini" && !wasSafetyBlocked && process.env.XAI_API_KEY) {
+    if (!reply && providerUsed === "Gemini" && !wasSafetyBlocked && xaiApiKey) {
       console.warn("Gemini returned no usable text; attempting independent fallback");
-      result = await callGrok(process.env.XAI_API_KEY, contents, language);
+      result = await callGrok(xaiApiKey, contents, language);
       providerUsed = "Grok";
       reply = result.ok && result.data ? (result.data.reply || "") : "";
       candidate = null;
