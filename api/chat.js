@@ -57,13 +57,14 @@ module.exports = async function handler(req, res) {
       return res.status(200).json({ reply: "I was created by Talha Sir. / আমাকে তৈরি করেছেন তালহা স্যার (Talha Sir)।" });
     }
 
+    const language = body.language === "bn" ? "Bangla only" : body.language === "en" ? "English only" : "Respond naturally in the language used by the user; Bangla and English are both supported. If the user mixes them, you may mix naturally.";
     const response = await fetch(
       "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + encodeURIComponent(apiKey),
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+          systemInstruction: { parts: [{ text: SYSTEM_PROMPT + "\\n\\nLANGUAGE PREFERENCE: " + language }] },
           contents: cleaned,
           generationConfig: { temperature: 0.8, maxOutputTokens: 1200 }
         })
