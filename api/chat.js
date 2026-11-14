@@ -152,18 +152,21 @@ module.exports = async function handler(req, res) {
     if (!result.ok) {
       const providerError = result.data && result.data.error ? result.data.error : {};
       if (result.status === 429) {
-        return res.status(429).json({
-          error: "Gemini rate limit reached. Please wait briefly and try again."
-        });
+        const limitReply = body.language === "bn"
+          ? "আরে ভাই, আমার ফ্রি কোটার পকেটও খালি! একটু বিরতি দে, চা খেয়ে আবার মাঠে নামি।"
+          : body.language === "en"
+            ? "Bro, my free quota just tapped out. Even my brain needs a tea break. Give me a minute and try again."
+            : "Bro, amar free quota-o ar dhar dite raji na. Ektu cha kheye ashi, tarpor abar proshno-bomb marish.";
+        return res.status(200).json({ reply: limitReply });
       }
       if (result.status === 400) {
         return res.status(400).json({
-          error: "Gemini rejected this request. Please try a shorter or differently worded message."
+          error: "That one broke my brain a little. Try asking it another way, bro."
         });
       }
       if (result.status === 401 || result.status === 403) {
         return res.status(502).json({
-          error: "Gemini rejected the API key or its permissions. Check GEMINI_API_KEY in Vercel."
+          error: "My backstage pass isn't working. The server boss needs to check the API key."
         });
       }
       console.error("Both Gemini model attempts failed", {
@@ -172,7 +175,7 @@ module.exports = async function handler(req, res) {
         message: providerError.message || "No provider error body"
       });
       return res.status(503).json({
-        error: "Gemini is temporarily unavailable. Please try again in a moment."
+        error: "My brain's having a tiny power cut. Try again in a moment, bro."
       });
     }
 
@@ -188,7 +191,7 @@ module.exports = async function handler(req, res) {
         promptFeedback: result.data.promptFeedback || null
       });
       return res.status(502).json({
-        error: "Gemini returned no answer. Please try again."
+        error: "My brain went blank for a second. Ask me again, bro."
       });
     }
 
@@ -196,7 +199,7 @@ module.exports = async function handler(req, res) {
   } catch (error) {
     console.error("Bongoboltu API handler error:", error);
     return res.status(500).json({
-      error: "The chat server encountered an unexpected error."
+      error: "The chat server tripped over its own shoelaces."
     });
   }
 };
