@@ -109,8 +109,7 @@ async function callGrok(apiKey, contents, language) {
       signal: controller.signal,
       body: JSON.stringify({
         model: "grok-4.7",
-        input: messages,
-        max_output_tokens: 4096
+        input: messages
       })
     });
 
@@ -129,7 +128,11 @@ async function callGrok(apiKey, contents, language) {
         httpStatus: response.status,
         code: err.code || err.type || null,
         message: err.message || err.detail || data.message || data.rawError || "Provider returned an empty error body",
-        requestId: response.headers.get("request-id") || response.headers.get("x-request-id") || null
+        requestId: response.headers.get("request-id") || response.headers.get("x-request-id") || null,
+        contentType: response.headers.get("content-type") || null,
+        contentLength: response.headers.get("content-length") || null,
+        server: response.headers.get("server") || null,
+        bodyLength: rawBody.length
       });
       return { ok: false, status: response.status, data };
     }
