@@ -32,7 +32,7 @@ async function submit(q){
  welcome.classList.add('hidden');input.value='';input.style.height='auto';addMessage('user',q);history.push({role:'user',content:q});send.disabled=true;showTyping();
  try{
   const controller=new AbortController();
-  const requestTimeout=setTimeout(()=>controller.abort(),20000);
+  const requestTimeout=setTimeout(()=>controller.abort(),24000);
   let response;
   try{
    response=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:history,language:lang.value}),signal:controller.signal});
