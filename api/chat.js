@@ -84,88 +84,6 @@ function shouldTryFallback(status) {
   return [400, 401, 403, 404, 408, 429, 500, 502, 503, 504].includes(status);
 }
 
-async function callGrok(apiKey, contents, language) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-
-  try {
-    const messages = [
-      {
-        role: "system",
-        content: SYSTEM_PROMPT + "\n\nLANGUAGE PREFERENCE: " + language
-      },
-      ...contents.map((message) => ({
-        role: message.role === "model" ? "assistant" : "user",
-        content: message.parts.map((part) => part.text || "").join("")
-      }))
-    ];
-
-    const response = await fetch("https://api.x.ai/v1/responses", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer " + apiKey
-      },
-      signal: controller.signal,
-      body: JSON.stringify({
-        model: "grok-4.7",
-        input: messages
-      })
-    });
-
-    // Read the body as text first so non-JSON provider errors are not lost.
-    const rawBody = await response.text();
-    let data = {};
-    try {
-      data = rawBody ? JSON.parse(rawBody) : {};
-    } catch {
-      data = { rawError: rawBody.slice(0, 1200) };
-    }
-
-    if (!response.ok) {
-      const err = data.error || data;
-      console.error("Grok response error", {
-        httpStatus: response.status,
-        code: err.code || err.type || (Array.isArray(data.errors) && data.errors[0] ? data.errors[0].code : null) || null,
-        message: err.message || err.detail || data.message || data.rawError ||
-          (Array.isArray(data.errors) && data.errors[0] ? data.errors[0].message : null) ||
-          "Provider returned an empty error body",
-        providerErrors: Array.isArray(data.errors) ? data.errors : undefined,
-        responseBody: rawBody.slice(0, 1200),
-        requestId: response.headers.get("request-id") || response.headers.get("x-request-id") || null,
-        contentType: response.headers.get("content-type") || null,
-        contentLength: response.headers.get("content-length") || null,
-        server: response.headers.get("server") || null,
-        bodyLength: rawBody.length
-      });
-      return { ok: false, status: response.status, data };
-    }
-
-    const reply = (
-      typeof data.output_text === "string"
-        ? data.output_text
-        : Array.isArray(data.output)
-          ? data.output
-              .filter((item) => item.type === "message" && item.role === "assistant")
-              .flatMap((item) => Array.isArray(item.content) ? item.content : [])
-              .filter((part) => (part.type === "output_text" || part.type === "text") && typeof part.text === "string")
-              .map((part) => part.text)
-              .join("")
-          : ""
-    ).trim();
-
-    return { ok: true, status: response.status, data: { reply } };
-  } catch (error) {
-    const timedOut = error && error.name === "AbortError";
-    console.error("Grok request failed", {
-      reason: timedOut ? "Request timed out" : (error.message || "Network error")
-    });
-    return { ok: false, status: timedOut ? 504 : 502, data: {} };
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
 async function callModel(model, apiKey, contents, language) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -227,10 +145,10 @@ module.exports = async function handler(req, res) {
   }
 
   const apiKey = process.env.GEMINI_API_KEY;
-  const xaiApiKey = process.env.XAI_API_KEY;
-  if (!apiKey && !xaiApiKey) {
+  const backupApiKey = process.env.GEMINI_API_KEY_BACKUP;
+  if (!apiKey && !backupApiKey) {
     return res.status(503).json({
-      error: "No AI provider key is configured. Add XAI_API_KEY or GEMINI_API_KEY to the server environment."
+      error: "No Gemini API key is configured on the server."
     });
   }
 
@@ -264,33 +182,26 @@ module.exports = async function handler(req, res) {
         ? "English only"
         : "Reply naturally in the language used by the user. Support Bangla, Banglish and English.";
 
-    // Prefer Grok when its key is configured. Gemini remains an independent
-    // fallback, so either provider can keep the chat available on its own.
+    // Use the primary Gemini key first, then silently retry with the
+    // independent backup key when the primary provider request fails.
     let result;
     let providerUsed;
 
-    if (xaiApiKey) {
-      result = await callGrok(xaiApiKey, contents, language);
-      providerUsed = "Grok";
-    } else {
+    if (apiKey) {
       result = await callModel(PRIMARY_MODEL, apiKey, contents, language);
-      providerUsed = "Gemini";
+      providerUsed = "Gemini primary";
+    } else {
+      result = await callModel(PRIMARY_MODEL, backupApiKey, contents, language);
+      providerUsed = "Gemini backup";
     }
 
-    if (!result.ok && shouldTryFallback(result.status)) {
-      if (providerUsed === "Grok" && apiKey) {
-        console.warn("Grok unavailable; attempting Gemini fallback", {
-          primaryStatus: result.status
-        });
-        result = await callModel(PRIMARY_MODEL, apiKey, contents, language);
-        providerUsed = "Gemini";
-      } else if (providerUsed === "Gemini" && xaiApiKey) {
-        console.warn("Gemini unavailable; attempting Grok fallback", {
-          primaryStatus: result.status
-        });
-        result = await callGrok(xaiApiKey, contents, language);
-        providerUsed = "Grok";
-      }
+    if (!result.ok && shouldTryFallback(result.status) &&
+        providerUsed === "Gemini primary" && backupApiKey) {
+      console.warn("Primary Gemini key unavailable; attempting backup key", {
+        primaryStatus: result.status
+      });
+      result = await callModel(PRIMARY_MODEL, backupApiKey, contents, language);
+      providerUsed = "Gemini backup";
     }
 
     if (!result.ok) {
@@ -328,18 +239,16 @@ module.exports = async function handler(req, res) {
       });
     }
 
-    let candidate = providerUsed === "Gemini" && result.data && Array.isArray(result.data.candidates)
+    let candidate = providerUsed.startsWith("Gemini") && result.data && Array.isArray(result.data.candidates)
       ? result.data.candidates[0]
       : null;
-    let reply = providerUsed === "Grok"
-      ? (result.data.reply || "")
-      : candidate && candidate.content && Array.isArray(candidate.content.parts)
-        ? candidate.content.parts.map((part) => typeof part.text === "string" ? part.text : "").join("").trim()
-        : "";
+    let reply = candidate && candidate.content && Array.isArray(candidate.content.parts)
+      ? candidate.content.parts.map((part) => typeof part.text === "string" ? part.text : "").join("").trim()
+      : "";
 
     // A successful HTTP response can still contain no usable text. In that
     // case, silently retry with Grok unless Gemini explicitly safety-blocked it.
-    const initialBlockReason = providerUsed === "Gemini" && result.data && result.data.promptFeedback
+    const initialBlockReason = providerUsed.startsWith("Gemini") && result.data && result.data.promptFeedback
       ? result.data.promptFeedback.blockReason
       : null;
     const initialFinishReason = candidate && candidate.finishReason;
@@ -348,16 +257,20 @@ module.exports = async function handler(req, res) {
       initialFinishReason === "RECITATION" ||
       initialFinishReason === "BLOCKLIST";
 
-    if (!reply && providerUsed === "Gemini" && !wasSafetyBlocked && xaiApiKey) {
-      console.warn("Gemini returned no usable text; attempting independent fallback");
-      result = await callGrok(xaiApiKey, contents, language);
-      providerUsed = "Grok";
-      reply = result.ok && result.data ? (result.data.reply || "") : "";
-      candidate = null;
+    if (!reply && providerUsed === "Gemini primary" && !wasSafetyBlocked && backupApiKey) {
+      console.warn("Primary Gemini key returned no usable text; attempting backup key");
+      result = await callModel(PRIMARY_MODEL, backupApiKey, contents, language);
+      providerUsed = "Gemini backup";
+      candidate = result.ok && result.data && Array.isArray(result.data.candidates)
+        ? result.data.candidates[0]
+        : null;
+      reply = candidate && candidate.content && Array.isArray(candidate.content.parts)
+        ? candidate.content.parts.map((part) => typeof part.text === "string" ? part.text : "").join("").trim()
+        : "";
     }
 
     if (!reply) {
-      const blockReason = providerUsed === "Gemini" && result.data && result.data.promptFeedback
+      const blockReason = providerUsed.startsWith("Gemini") && result.data && result.data.promptFeedback
         ? result.data.promptFeedback.blockReason
         : null;
       const finishReason = candidate && candidate.finishReason;
