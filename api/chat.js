@@ -208,7 +208,7 @@ module.exports = async function handler(req, res) {
   }
 
   const apiKey = process.env.GEMINI_API_KEY;
-  const xaiApiKey = xaiApiKey;
+  const xaiApiKey = process.env.XAI_API_KEY;
   if (!apiKey && !xaiApiKey) {
     return res.status(503).json({
       error: "No AI provider key is configured. Add XAI_API_KEY or GEMINI_API_KEY to the server environment."
