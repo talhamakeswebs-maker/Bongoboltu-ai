@@ -90,12 +90,15 @@ async function submit(q){
  welcome.classList.add('hidden');input.value='';input.style.height='auto';addMessage('user',q);history.push({role:'user',content:q});send.disabled=true;showTyping();
  try{
   const controller=new AbortController();
-  const requestTimeout=setTimeout(()=>controller.abort(),24000);
+  const requestTimeout=setTimeout(()=>controller.abort(),21000);
   let response;
   try{
    response=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:history,language:lang.value}),signal:controller.signal});
   }finally{clearTimeout(requestTimeout)}
-  const data=await response.json();document.getElementById('typing')?.remove();
+  const responseText=await response.text();
+  let data={};
+  try{data=responseText?JSON.parse(responseText):{};}catch{throw new Error('Server is temporarily unavailable. Give it a moment and try again, bro.');}
+  document.getElementById('typing')?.remove();
   if(!response.ok)throw new Error(data.error||'The AI could not respond.');
   const reply=data.reply||'I could not generate a response. Please try again.';
   history.push({role:'assistant',content:reply});addMessage('assistant',reply);
