@@ -59,7 +59,7 @@ module.exports = async function handler(req, res) {
 
     const language = body.language === "bn" ? "Bangla only" : body.language === "en" ? "English only" : "Respond naturally in the language used by the user; Bangla and English are both supported. If the user mixes them, you may mix naturally.";
     const response = await fetch(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + encodeURIComponent(apiKey),
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=" + encodeURIComponent(apiKey),
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
