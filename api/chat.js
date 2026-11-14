@@ -84,6 +84,85 @@ function shouldTryFallback(status) {
   return [400, 401, 403, 404, 408, 429, 500, 502, 503, 504].includes(status);
 }
 
+async function callGrok(apiKey, contents, language) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+  try {
+    // Use xAI's documented Responses API with a plain-text input payload.
+    // This avoids the role-array request shape that previously returned HTTP 400.
+    const transcript = contents.map((message) => {
+      const speaker = message.role === "model" ? "Bongoboltu" : "User";
+      const text = message.parts.map((part) => part.text || "").join("");
+      return speaker + ": " + text;
+    }).join("\n\n");
+
+    const input = SYSTEM_PROMPT +
+      "\n\nLANGUAGE PREFERENCE: " + language +
+      "\n\nConversation so far:\n" + transcript +
+      "\n\nBongoboltu:";
+
+    const response = await fetch("https://api.x.ai/v1/responses", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + apiKey
+      },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model: "grok-4.7",
+        input
+      })
+    });
+
+    const rawBody = await response.text();
+    let data = {};
+    try {
+      data = rawBody ? JSON.parse(rawBody) : {};
+    } catch {
+      data = { rawError: rawBody.slice(0, 1200) };
+    }
+
+    if (!response.ok) {
+      const err = data.error || data;
+      console.error("Grok response error", {
+        httpStatus: response.status,
+        code: err.code || err.type || null,
+        message: err.message || err.detail || data.message || data.rawError ||
+          "Provider returned an empty error body",
+        responseBody: rawBody.slice(0, 1200),
+        requestId: response.headers.get("request-id") || response.headers.get("x-request-id") || null,
+        contentType: response.headers.get("content-type") || null,
+        server: response.headers.get("server") || null
+      });
+      return { ok: false, status: response.status, data };
+    }
+
+    const reply = (
+      typeof data.output_text === "string"
+        ? data.output_text
+        : Array.isArray(data.output)
+          ? data.output
+              .filter((item) => item.type === "message" && item.role === "assistant")
+              .flatMap((item) => Array.isArray(item.content) ? item.content : [])
+              .filter((part) => (part.type === "output_text" || part.type === "text") && typeof part.text === "string")
+              .map((part) => part.text)
+              .join("")
+          : ""
+    ).trim();
+
+    return { ok: true, status: response.status, data: { reply } };
+  } catch (error) {
+    const timedOut = error && error.name === "AbortError";
+    console.error("Grok request failed", {
+      reason: timedOut ? "Request timed out" : (error.message || "Network error")
+    });
+    return { ok: false, status: timedOut ? 504 : 502, data: {} };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function callModel(model, apiKey, contents, language) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -146,9 +225,10 @@ module.exports = async function handler(req, res) {
 
   const apiKey = process.env.GEMINI_API_KEY;
   const backupApiKey = process.env.GEMINI_API_KEY_BACKUP;
-  if (!apiKey && !backupApiKey) {
+  const xaiApiKey = process.env.XAI_API_KEY;
+  if (!apiKey && !backupApiKey && !xaiApiKey) {
     return res.status(503).json({
-      error: "No Gemini API key is configured on the server."
+      error: "No AI provider key is configured on the server."
     });
   }
 
@@ -182,12 +262,15 @@ module.exports = async function handler(req, res) {
         ? "English only"
         : "Reply naturally in the language used by the user. Support Bangla, Banglish and English.";
 
-    // Use the primary Gemini key first, then silently retry with the
-    // independent backup key when the primary provider request fails.
+    // Try Grok first when configured. Gemini primary and backup keys remain
+    // silent fallbacks so the chat continues without exposing provider changes.
     let result;
     let providerUsed;
 
-    if (apiKey) {
+    if (xaiApiKey) {
+      result = await callGrok(xaiApiKey, contents, language);
+      providerUsed = "Grok";
+    } else if (apiKey) {
       result = await callModel(PRIMARY_MODEL, apiKey, contents, language);
       providerUsed = "Gemini primary";
     } else {
@@ -195,13 +278,26 @@ module.exports = async function handler(req, res) {
       providerUsed = "Gemini backup";
     }
 
-    if (!result.ok && shouldTryFallback(result.status) &&
-        providerUsed === "Gemini primary" && backupApiKey) {
-      console.warn("Primary Gemini key unavailable; attempting backup key", {
-        primaryStatus: result.status
-      });
-      result = await callModel(PRIMARY_MODEL, backupApiKey, contents, language);
-      providerUsed = "Gemini backup";
+    if (!result.ok && shouldTryFallback(result.status)) {
+      if (providerUsed === "Grok" && apiKey) {
+        console.warn("Grok unavailable; attempting primary Gemini fallback", {
+          primaryStatus: result.status
+        });
+        result = await callModel(PRIMARY_MODEL, apiKey, contents, language);
+        providerUsed = "Gemini primary";
+      } else if (providerUsed === "Gemini primary" && backupApiKey) {
+        console.warn("Primary Gemini key unavailable; attempting backup key", {
+          primaryStatus: result.status
+        });
+        result = await callModel(PRIMARY_MODEL, backupApiKey, contents, language);
+        providerUsed = "Gemini backup";
+      } else if (providerUsed === "Grok" && backupApiKey) {
+        console.warn("Grok unavailable; attempting backup Gemini key", {
+          primaryStatus: result.status
+        });
+        result = await callModel(PRIMARY_MODEL, backupApiKey, contents, language);
+        providerUsed = "Gemini backup";
+      }
     }
 
     if (!result.ok) {
@@ -242,9 +338,11 @@ module.exports = async function handler(req, res) {
     let candidate = providerUsed.startsWith("Gemini") && result.data && Array.isArray(result.data.candidates)
       ? result.data.candidates[0]
       : null;
-    let reply = candidate && candidate.content && Array.isArray(candidate.content.parts)
-      ? candidate.content.parts.map((part) => typeof part.text === "string" ? part.text : "").join("").trim()
-      : "";
+    let reply = providerUsed === "Grok"
+      ? (result.data && result.data.reply ? result.data.reply : "")
+      : candidate && candidate.content && Array.isArray(candidate.content.parts)
+        ? candidate.content.parts.map((part) => typeof part.text === "string" ? part.text : "").join("").trim()
+        : "";
 
     // A successful HTTP response can still contain no usable text. In that
     // case, silently retry with Grok unless Gemini explicitly safety-blocked it.
@@ -257,7 +355,19 @@ module.exports = async function handler(req, res) {
       initialFinishReason === "RECITATION" ||
       initialFinishReason === "BLOCKLIST";
 
-    if (!reply && providerUsed === "Gemini primary" && !wasSafetyBlocked && backupApiKey) {
+    if (!reply && !wasSafetyBlocked && providerUsed === "Grok" && apiKey) {
+      console.warn("Grok returned no usable text; attempting primary Gemini fallback");
+      result = await callModel(PRIMARY_MODEL, apiKey, contents, language);
+      providerUsed = "Gemini primary";
+      candidate = result.ok && result.data && Array.isArray(result.data.candidates)
+        ? result.data.candidates[0]
+        : null;
+      reply = candidate && candidate.content && Array.isArray(candidate.content.parts)
+        ? candidate.content.parts.map((part) => typeof part.text === "string" ? part.text : "").join("").trim()
+        : "";
+    }
+
+    if (!reply && !wasSafetyBlocked && providerUsed === "Gemini primary" && backupApiKey) {
       console.warn("Primary Gemini key returned no usable text; attempting backup key");
       result = await callModel(PRIMARY_MODEL, backupApiKey, contents, language);
       providerUsed = "Gemini backup";
