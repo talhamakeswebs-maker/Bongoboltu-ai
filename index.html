@@ -31,12 +31,17 @@ async function submit(q){
  q=(q||input.value).trim();if(!q||send.disabled)return;
  welcome.classList.add('hidden');input.value='';input.style.height='auto';addMessage('user',q);history.push({role:'user',content:q});send.disabled=true;showTyping();
  try{
-  const response=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:history,language:lang.value})});
+  const controller=new AbortController();
+  const requestTimeout=setTimeout(()=>controller.abort(),20000);
+  let response;
+  try{
+   response=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:history,language:lang.value}),signal:controller.signal});
+  }finally{clearTimeout(requestTimeout)}
   const data=await response.json();document.getElementById('typing')?.remove();
   if(!response.ok)throw new Error(data.error||'The AI could not respond.');
   const reply=data.reply||'I could not generate a response. Please try again.';
   history.push({role:'assistant',content:reply});addMessage('assistant',reply,'Bongoboltu AI · AI-generated response');
- }catch(err){document.getElementById('typing')?.remove();addMessage('assistant',err.message||'Connection error. Please try again.','Connection notice');history.pop()}
+ }catch(err){document.getElementById('typing')?.remove();const message=err.name==='AbortError'?'The AI request took too long. Please try again.':(err.message||'Connection error. Please try again.');addMessage('assistant',message,'Connection notice');history.pop()}
  finally{send.disabled=false;input.focus()}
 }
 form.addEventListener('submit',e=>{e.preventDefault();submit()});
