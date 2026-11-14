@@ -38,8 +38,8 @@ HISTORICAL HONESTY:
 Keep answers useful and naturally sized. For Bangla, use clear, natural Bengali script where possible.
 `;
 
-const PRIMARY_MODEL = "gemini-3.8-flash";
-const REQUEST_TIMEOUT_MS = 4500;
+const PRIMARY_MODEL = "gemini-3.5-flash";
+const REQUEST_TIMEOUT_MS = 6000;
 const TOTAL_PROVIDER_BUDGET_MS = 17000;
 const MAX_MESSAGES = 20;
 const MAX_MESSAGE_CHARS = 6000;
@@ -105,10 +105,7 @@ async function callModel(model, apiKey, contents, language) {
         },
         contents,
         generationConfig: {
-          maxOutputTokens: 4096,
-          ...(model === PRIMARY_MODEL
-            ? { thinkingConfig: { thinkingLevel: "low" } }
-            : {})
+          maxOutputTokens: 2048
         }
       })
     });
@@ -194,8 +191,6 @@ module.exports = async function handler(req, res) {
 
     const modelCandidates = [
       PRIMARY_MODEL,
-      "gemini-3.6-flash",
-      "gemini-3.5-flash",
       "gemini-3.5-flash-lite"
     ];
 
