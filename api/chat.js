@@ -114,26 +114,38 @@ async function callGrok(apiKey, contents, language) {
       })
     });
 
-    const data = await response.json().catch(() => ({}));
+    // Read the body as text first so non-JSON provider errors are not lost.
+    const rawBody = await response.text();
+    let data = {};
+    try {
+      data = rawBody ? JSON.parse(rawBody) : {};
+    } catch {
+      data = { rawError: rawBody.slice(0, 1200) };
+    }
+
     if (!response.ok) {
-      const err = data.error || {};
+      const err = data.error || data;
       console.error("Grok response error", {
-        code: err.code || response.status,
-        status: err.type || response.statusText,
-        message: err.message || "No provider message"
+        httpStatus: response.status,
+        code: err.code || err.type || null,
+        message: err.message || err.detail || data.message || data.rawError || "Provider returned an empty error body",
+        requestId: response.headers.get("request-id") || response.headers.get("x-request-id") || null
       });
       return { ok: false, status: response.status, data };
     }
 
-    const reply = Array.isArray(data.output)
-      ? data.output
-          .filter((item) => item.type === "message" && item.role === "assistant")
-          .flatMap((item) => Array.isArray(item.content) ? item.content : [])
-          .filter((part) => part.type === "output_text" && typeof part.text === "string")
-          .map((part) => part.text)
-          .join("")
-          .trim()
-      : "";
+    const reply = (
+      typeof data.output_text === "string"
+        ? data.output_text
+        : Array.isArray(data.output)
+          ? data.output
+              .filter((item) => item.type === "message" && item.role === "assistant")
+              .flatMap((item) => Array.isArray(item.content) ? item.content : [])
+              .filter((part) => (part.type === "output_text" || part.type === "text") && typeof part.text === "string")
+              .map((part) => part.text)
+              .join("")
+          : ""
+    ).trim();
 
     return { ok: true, status: response.status, data: { reply } };
   } catch (error) {
