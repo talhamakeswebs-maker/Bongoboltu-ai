@@ -183,8 +183,8 @@ module.exports = async function handler(req, res) {
     // Gemini is the only provider. Try the primary model with both keys,
     // then use stable alternate Flash models if Gemini 3.8 is unavailable.
     const keyCandidates = [
-      { key: apiKey, name: "Gemini primary" },
-      { key: backupApiKey, name: "Gemini backup" }
+      { key: backupApiKey, name: "Gemini backup" },
+      { key: apiKey, name: "Gemini primary" }
     ].filter((item, index, all) =>
       item.key && all.findIndex((candidate) => candidate.key === item.key) === index
     );
