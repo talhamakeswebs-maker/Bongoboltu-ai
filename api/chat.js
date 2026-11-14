@@ -39,7 +39,8 @@ Keep answers useful and naturally sized. For Bangla, use clear, natural Bengali 
 `;
 
 const PRIMARY_MODEL = "gemini-3.8-flash";
-const REQUEST_TIMEOUT_MS = 9000;\nconst TOTAL_PROVIDER_BUDGET_MS = 30000;
+const REQUEST_TIMEOUT_MS = 9000;
+const TOTAL_PROVIDER_BUDGET_MS = 30000;
 const MAX_MESSAGES = 20;
 const MAX_MESSAGE_CHARS = 6000;
 const MAX_TOTAL_INPUT_CHARS = 48000;
