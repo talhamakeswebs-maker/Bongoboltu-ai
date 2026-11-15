@@ -65,8 +65,8 @@ Keep answers useful and naturally sized. For Bangla, use clear, natural Bengali 
 
 const PRIMARY_MODEL = "gemini-3.8-flash";
 const FALLBACK_MODELS = ["gemini-3.5-flash-lite"];
-const REQUEST_TIMEOUT_MS = 18000;
-const TOTAL_PROVIDER_BUDGET_MS = 42000;
+const REQUEST_TIMEOUT_MS = 12000;
+const TOTAL_PROVIDER_BUDGET_MS = 36000;
 const MAX_MESSAGES = 20;
 const MAX_MESSAGE_CHARS = 6000;
 const MAX_TOTAL_INPUT_CHARS = 48000;
@@ -221,8 +221,8 @@ module.exports = async function handler(req, res) {
 
     // Gemini 3.8 Flash is the selected model. Try both configured keys.
     const keyCandidates = [
-      { key: backupApiKey, name: "Gemini backup" },
-      { key: apiKey, name: "Gemini primary" }
+      { key: apiKey, name: "Gemini primary" },
+      { key: backupApiKey, name: "Gemini backup" }
     ].filter((item, index, all) =>
       item.key && all.findIndex((candidate) => candidate.key === item.key) === index
     );
@@ -235,7 +235,7 @@ module.exports = async function handler(req, res) {
     const failedStatuses = [];
     let routeSucceeded = false;
 
-    // Try the backup key first, then the primary key. For each key, try the
+    // Try the primary key first, then the backup key. For each key, try the
     // selected Gemini 3.8 model and its compatible fallback model.
     for (const keyCandidate of keyCandidates) {
       for (const model of modelCandidates) {
