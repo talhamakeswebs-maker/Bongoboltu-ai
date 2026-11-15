@@ -79,7 +79,7 @@ header{height:68px;padding:0 28px;border-bottom:1px solid var(--line);display:fl
 const chat=document.getElementById('chat'),welcome=document.getElementById('welcome'),input=document.getElementById('prompt'),form=document.getElementById('form'),send=document.getElementById('send'),lang=document.getElementById('language');
 let history=[];
 function renderRichText(element,text){
- const pattern=/\\[([^\\]]+)\\]\\((https?:\\/\\/[^\\s)]+)\\)|(https?:\\/\\/[^\\s<]+)/g;
+ const pattern=/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s<]+)/g;
  let last=0,match;
  while((match=pattern.exec(text))!==null){
   element.append(document.createTextNode(text.slice(last,match.index)));
