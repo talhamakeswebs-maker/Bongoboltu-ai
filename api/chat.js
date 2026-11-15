@@ -178,6 +178,82 @@ async function callModel(model, apiKey, contents, language) {
   }
 }
 
+
+const GROK_MODEL = "grok-4.7";
+const GROK_TIMEOUT_MS = 15000;
+
+async function callGrok(apiKey, contents, language) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), GROK_TIMEOUT_MS);
+  const input = [
+    { role: "system", content: SYSTEM_PROMPT + "\\n\\nLANGUAGE PREFERENCE: " + language },
+    ...contents.map((message) => ({
+      role: message.role === "model" ? "assistant" : "user",
+      content: message.parts.map((part) => part.text || "").join("")
+    }))
+  ];
+
+  try {
+    const response = await fetch("https://api.x.ai/v1/responses", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer " + apiKey
+      },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model: GROK_MODEL,
+        input,
+        reasoning: { effort: "low" },
+        max_output_tokens: 2048,
+        temperature: 0.7,
+        top_p: 0.95,
+        store: false
+      })
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      console.error("Grok response error", {
+        model: GROK_MODEL,
+        status: response.status,
+        message: data.error && data.error.message ? data.error.message : "No provider message"
+      });
+      return { ok: false, status: response.status, data };
+    }
+
+    const reply = Array.isArray(data.output)
+      ? data.output
+          .filter((item) => item && item.type === "message" && Array.isArray(item.content))
+          .flatMap((item) => item.content)
+          .filter((part) => part && (part.type === "output_text" || part.type === "text"))
+          .map((part) => typeof part.text === "string" ? part.text : "")
+          .join("")
+          .trim()
+      : "";
+
+    return {
+      ok: true,
+      status: response.status,
+      data: {
+        candidates: [{
+          content: { parts: [{ text: reply }] },
+          finishReason: data.status === "incomplete" ? "MAX_TOKENS" : "STOP"
+        }]
+      }
+    };
+  } catch (error) {
+    const timedOut = error && error.name === "AbortError";
+    console.error("Grok request failed", {
+      model: GROK_MODEL,
+      reason: timedOut ? "Request timed out" : (error.message || "Network error")
+    });
+    return { ok: false, status: timedOut ? 504 : 502, data: {} };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function callGroq(apiKey, contents, language) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), GROQ_TIMEOUT_MS);
@@ -251,7 +327,8 @@ module.exports = async function handler(req, res) {
   const apiKey = process.env.GEMINI_API_KEY;
   const backupApiKey = process.env.GEMINI_API_KEY_BACKUP;
   const groqApiKey = process.env.GROQ_API_KEY;
-  if (!apiKey && !backupApiKey && !groqApiKey) {
+  const xaiApiKey = process.env.XAI_API_KEY;
+  if (!apiKey && !backupApiKey && !groqApiKey && !xaiApiKey) {
     return res.status(503).json({
       error: "No AI provider key is configured on the server."
     });
@@ -299,7 +376,13 @@ module.exports = async function handler(req, res) {
         ? "English only"
         : "Reply naturally in the language used by the user. Support Bangla, Banglish and English.";
 
-    // Gemini 3.8 Flash is the selected model. Try both configured keys.
+    // Grok is the primary provider. Gemini and Groq remain independent fallbacks.
+    let result = xaiApiKey
+      ? await callGrok(xaiApiKey, contents, language)
+      : { ok: false, status: 503, data: {} };
+    let providerUsed = xaiApiKey ? "Grok (" + GROK_MODEL + ")" : "Grok (API key missing)";
+
+    // Gemini fallback: try both configured keys and compatible models.
     const keyCandidates = [
       { key: apiKey, name: "Gemini primary" },
       { key: backupApiKey, name: "Gemini backup" }
@@ -309,14 +392,12 @@ module.exports = async function handler(req, res) {
 
     const modelCandidates = [PRIMARY_MODEL, ...FALLBACK_MODELS];
 
-    let result = { ok: false, status: 503, data: {} };
-    let providerUsed = "Gemini";
     const providerStartedAt = Date.now();
     const failedStatuses = [];
     let routeSucceeded = false;
 
-    // Try the primary key first, then the backup key. For each key, try the
-    // selected Gemini 3.8 model and its compatible fallback model.
+    // Only call Gemini when Grok is unavailable or returns an error.
+    if (!result.ok) {
     for (const keyCandidate of keyCandidates) {
       for (const model of modelCandidates) {
         if (Date.now() - providerStartedAt >= TOTAL_PROVIDER_BUDGET_MS) {
@@ -337,6 +418,7 @@ module.exports = async function handler(req, res) {
       }
       if (routeSucceeded || Date.now() - providerStartedAt >= TOTAL_PROVIDER_BUDGET_MS) break;
     }
+    }
 
     // Report quota exhaustion only when every attempted Gemini route was rate-limited.
     if (!routeSucceeded && failedStatuses.length && failedStatuses.every((status) => status === 429)) {
@@ -346,7 +428,7 @@ module.exports = async function handler(req, res) {
     // Groq is an independent provider, so it can still answer when Gemini is down,
     // rate-limited, misconfigured, or times out.
     if (!result.ok && groqApiKey) {
-      console.warn("Gemini routes unavailable; switching to Groq", { status: result.status });
+      console.warn("Grok/Gemini routes unavailable; switching to Groq", { status: result.status });
       result = await callGroq(groqApiKey, contents, language);
       providerUsed = "Groq (" + GROQ_MODEL + ")";
     }
@@ -393,8 +475,8 @@ module.exports = async function handler(req, res) {
       ? candidate.content.parts.map((part) => typeof part.text === "string" ? part.text : "").join("").trim()
       : "";
 
-    // A successful HTTP response can still contain no usable text. Retry with
-    // the backup Gemini key unless Gemini explicitly safety-blocked the request.
+    // A successful provider response can still contain no usable text. Retry
+    // through Gemini/Groq unless the model explicitly safety-blocked the request.
     const initialBlockReason = result.data && result.data.promptFeedback
       ? result.data.promptFeedback.blockReason
       : null;
@@ -403,6 +485,19 @@ module.exports = async function handler(req, res) {
       initialFinishReason === "SAFETY" ||
       initialFinishReason === "RECITATION" ||
       initialFinishReason === "BLOCKLIST";
+
+    if (!reply && !wasSafetyBlocked && !providerUsed.startsWith("Gemini") && !providerUsed.startsWith("Groq") && (apiKey || backupApiKey)) {
+      console.warn("Grok returned no usable text; attempting Gemini fallback");
+      const fallbackKey = apiKey || backupApiKey;
+      result = await callModel(PRIMARY_MODEL, fallbackKey, contents, language);
+      providerUsed = apiKey ? "Gemini primary" : "Gemini backup";
+      candidate = result.ok && result.data && Array.isArray(result.data.candidates)
+        ? result.data.candidates[0]
+        : null;
+      reply = candidate && candidate.content && Array.isArray(candidate.content.parts)
+        ? candidate.content.parts.map((part) => typeof part.text === "string" ? part.text : "").join("").trim()
+        : "";
+    }
 
     if (!reply && !wasSafetyBlocked && providerUsed.startsWith("Gemini primary") && backupApiKey) {
       console.warn("Primary Gemini key returned no usable text; attempting backup key");
@@ -417,7 +512,7 @@ module.exports = async function handler(req, res) {
     }
 
     if (!reply && !wasSafetyBlocked && groqApiKey && !providerUsed.startsWith("Groq")) {
-      console.warn("Gemini returned no usable text; switching to Groq");
+      console.warn("AI provider returned no usable text; switching to Groq");
       result = await callGroq(groqApiKey, contents, language);
       providerUsed = "Groq (" + GROQ_MODEL + ")";
       candidate = result.ok && result.data && Array.isArray(result.data.candidates)
