@@ -27,7 +27,7 @@ header{height:68px;padding:0 28px;border-bottom:1px solid var(--line);display:fl
 .welcome p{color:var(--muted);line-height:1.7;font-size:13px;margin:0}
 .message{display:flex;gap:12px;max-width:720px;width:100%;align-self:flex-start;animation:rise .2s ease}
 .message.user{align-self:flex-end;flex-direction:row-reverse}
-.avatar{width:32px;height:32px;flex:0 0 32px;border-radius:50%;background:#e8e8e3 url('https://commons.wikimedia.org/wiki/Special:FilePath/Official_portrait_of_Sheikh_Mujibur_Rahman.jpg') center 25%/cover no-repeat;overflow:hidden}
+.avatar{width:32px;height:32px;flex:0 0 32px;border-radius:50%;background:#e8e8e3;color:#315c48;display:grid;place-items:center;font-weight:700;overflow:hidden}.message:not(.user) .avatar::before{content:'A'}
 .user .avatar{background:#e6e9e4;color:#315c48;display:grid;place-items:center;font-size:10px;font-weight:700}
 .bubble{padding:12px 15px;border-radius:4px 13px 13px 13px;background:var(--surface);border:1px solid var(--line);line-height:1.75;font-size:13px;white-space:pre-wrap;max-width:100%}
 .user .bubble{background:#edf0eb;border-color:#edf0eb;border-radius:13px 4px 13px 13px}
