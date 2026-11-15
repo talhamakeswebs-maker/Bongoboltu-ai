@@ -64,8 +64,9 @@ Keep answers useful and naturally sized. For Bangla, use clear, natural Bengali 
 `;
 
 const PRIMARY_MODEL = "gemini-3.5-flash";
+const FALLBACK_MODELS = ["gemini-3.5-flash-lite"];
 const REQUEST_TIMEOUT_MS = 6000;
-const TOTAL_PROVIDER_BUDGET_MS = 17000;
+const TOTAL_PROVIDER_BUDGET_MS = 26000;
 const MAX_MESSAGES = 20;
 const MAX_MESSAGE_CHARS = 6000;
 const MAX_TOTAL_INPUT_CHARS = 48000;
@@ -245,27 +246,40 @@ module.exports = async function handler(req, res) {
       item.key && all.findIndex((candidate) => candidate.key === item.key) === index
     );
 
-    const modelCandidates = [PRIMARY_MODEL];
+    const modelCandidates = [PRIMARY_MODEL, ...FALLBACK_MODELS];
 
     let result = { ok: false, status: 503, data: {} };
     let providerUsed = "Gemini";
     const providerStartedAt = Date.now();
+    const failedStatuses = [];
+    let routeSucceeded = false;
 
-    for (const model of modelCandidates) {
-      for (const keyCandidate of keyCandidates) {
+    // Try the backup key first, then the primary key. For each key, try the
+    // selected Gemini 3.5 model and its compatible fallback model.
+    for (const keyCandidate of keyCandidates) {
+      for (const model of modelCandidates) {
         if (Date.now() - providerStartedAt >= TOTAL_PROVIDER_BUDGET_MS) {
           console.warn("Gemini failover time budget reached; stopping retries");
           break;
         }
         result = await callModel(model, keyCandidate.key, contents, language, adultMode);
         providerUsed = keyCandidate.name + " (" + model + ")";
-        if (result.ok) break;
+        if (result.ok) {
+          routeSucceeded = true;
+          break;
+        }
+        failedStatuses.push(result.status);
         console.warn("Gemini route unavailable; trying next route", {
           provider: providerUsed,
           status: result.status
         });
       }
-      if (result.ok || Date.now() - providerStartedAt >= TOTAL_PROVIDER_BUDGET_MS) break;
+      if (routeSucceeded || Date.now() - providerStartedAt >= TOTAL_PROVIDER_BUDGET_MS) break;
+    }
+
+    // Report quota exhaustion only when every attempted route was rate-limited.
+    if (!routeSucceeded && failedStatuses.length && failedStatuses.every((status) => status === 429)) {
+      result.status = 429;
     }
 
     if (!result.ok) {
