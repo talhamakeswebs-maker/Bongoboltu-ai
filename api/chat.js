@@ -63,7 +63,7 @@ HISTORICAL HONESTY:
 Keep answers useful and naturally sized. For Bangla, use clear, natural Bengali script where possible.
 `;
 
-const PRIMARY_MODEL = "gemini-3.5-flash-lite";
+const PRIMARY_MODEL = "gemini-3.5-flash";
 const REQUEST_TIMEOUT_MS = 6000;
 const TOTAL_PROVIDER_BUDGET_MS = 17000;
 const MAX_MESSAGES = 20;
@@ -140,7 +140,7 @@ function shouldTryFallback(status) {
   return [400, 401, 403, 404, 408, 429, 500, 502, 503, 504].includes(status);
 }
 
-async function callModel(model, apiKey, contents, language) {
+async function callModel(model, apiKey, contents, language, adultMode) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   const url = "https://generativelanguage.googleapis.com/v1beta/models/" +
@@ -257,7 +257,7 @@ module.exports = async function handler(req, res) {
           console.warn("Gemini failover time budget reached; stopping retries");
           break;
         }
-        result = await callModel(model, keyCandidate.key, contents, language);
+        result = await callModel(model, keyCandidate.key, contents, language, adultMode);
         providerUsed = keyCandidate.name + " (" + model + ")";
         if (result.ok) break;
         console.warn("Gemini route unavailable; trying next route", {
@@ -321,9 +321,9 @@ module.exports = async function handler(req, res) {
       initialFinishReason === "RECITATION" ||
       initialFinishReason === "BLOCKLIST";
 
-    if (!reply && !wasSafetyBlocked && providerUsed === "Gemini primary" && backupApiKey) {
+    if (!reply && !wasSafetyBlocked && providerUsed.startsWith("Gemini primary") && backupApiKey) {
       console.warn("Primary Gemini key returned no usable text; attempting backup key");
-      result = await callModel(PRIMARY_MODEL, backupApiKey, contents, language);
+      result = await callModel(PRIMARY_MODEL, backupApiKey, contents, language, adultMode);
       providerUsed = "Gemini backup";
       candidate = result.ok && result.data && Array.isArray(result.data.candidates)
         ? result.data.candidates[0]
