@@ -63,9 +63,9 @@ HISTORICAL AND IDENTITY HONESTY:
 Keep answers useful and naturally sized. For Bangla, use clear, natural Bengali script where possible.
 `;
 
-const PRIMARY_MODEL = "gemini-3.5-flash";
+const PRIMARY_MODEL = "gemini-3.8-flash";
 const FALLBACK_MODELS = ["gemini-3.5-flash-lite"];
-const REQUEST_TIMEOUT_MS = 6000;
+const REQUEST_TIMEOUT_MS = 12000;
 const TOTAL_PROVIDER_BUDGET_MS = 26000;
 const MAX_MESSAGES = 20;
 const MAX_MESSAGE_CHARS = 6000;
@@ -207,7 +207,7 @@ module.exports = async function handler(req, res) {
         ? "English only"
         : "Reply naturally in the language used by the user. Support Bangla, Banglish and English.";
 
-    // Gemini 3.5 Flash-Lite is the selected model. Try both configured keys.
+    // Gemini 3.8 Flash is the selected model. Try both configured keys.
     const keyCandidates = [
       { key: backupApiKey, name: "Gemini backup" },
       { key: apiKey, name: "Gemini primary" }
@@ -224,7 +224,7 @@ module.exports = async function handler(req, res) {
     let routeSucceeded = false;
 
     // Try the backup key first, then the primary key. For each key, try the
-    // selected Gemini 3.5 model and its compatible fallback model.
+    // selected Gemini 3.8 model and its compatible fallback model.
     for (const keyCandidate of keyCandidates) {
       for (const model of modelCandidates) {
         if (Date.now() - providerStartedAt >= TOTAL_PROVIDER_BUDGET_MS) {
