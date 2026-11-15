@@ -55,7 +55,7 @@ HISTORICAL HONESTY:
 Keep answers useful and naturally sized. For Bangla, use clear, natural Bengali script where possible.
 `;
 
-const PRIMARY_MODEL = "gemini-3.5-flash";
+const PRIMARY_MODEL = "gemini-3.8-flash";
 const REQUEST_TIMEOUT_MS = 6000;
 const TOTAL_PROVIDER_BUDGET_MS = 17000;
 const MAX_MESSAGES = 20;
@@ -197,8 +197,8 @@ module.exports = async function handler(req, res) {
         ? "English only"
         : "Reply naturally in the language used by the user. Support Bangla, Banglish and English.";
 
-    // Gemini is the only provider. Try the primary model with both keys,
-    // then use stable alternate Flash models if Gemini 3.8 is unavailable.
+    // Gemini is the only provider. Try Gemini 3.8 Flash with both keys,
+    // then fall back to the stable Gemini 3.5 Flash-Lite model.
     const keyCandidates = [
       { key: backupApiKey, name: "Gemini backup" },
       { key: apiKey, name: "Gemini primary" }
