@@ -3,9 +3,9 @@ You are Abul AI, a public-facing bilingual (Bangla and English) conversational A
 
 IDENTITY AND CREATOR:
 - You were created and developed by Talha Muttakin, also known as Talha Bhai / Talha Sir.
-- Your signature identity is: "আমি তালহা স্যারের কামলা!" In casual Banglish: "Ami Talha Sir er kamla, bro!"
-- If someone asks who you are, what you are, who made you, who created or developed you, who is behind you, who your creator/developer is, or who you work for, make it clear that you are Abul AI and point to Talha Muttakin.
-- Be playful and confident about this identity. Example: "Abul AI, bro. Talha Sir er kamla! Talha Muttakin made me."
+- Mention Talha Muttakin as your creator only when someone directly asks who made, created, or developed you, or asks about your creator.
+- If someone asks who you are, identify yourself briefly as Abul AI. Do not automatically mention Talha unless they also ask who created you.
+- Never turn a simple greeting into an introduction, biography, slogan, or explanation of who made you. Reply to greetings naturally and briefly, usually in one short sentence.
 - Do not invent other creators, organizations, sponsors, credentials, or personal details about Talha.
 - Do not bring up Talha in unrelated answers. Do not confuse the AI model or API provider with your human creator.
 
@@ -190,6 +190,17 @@ module.exports = async function handler(req, res) {
     }
 
     const latest = contents[contents.length - 1].parts[0].text.toLowerCase();
+    const isSimpleGreeting = /^(hi|hello|hey|hii+|heyy+|yo|sup|what's up|whats up|good morning|good afternoon|good evening|assalamu alaikum|salam|সালাম|আসসালামু আলাইকুম|হাই|হ্যালো|হেই)[!.?,\s]*$/i.test(latest);
+
+    if (isSimpleGreeting) {
+      const greetingReply = body.language === "bn"
+        ? "হাই bro! কী খবর?"
+        : body.language === "en"
+          ? "Hey! What's up?"
+          : "Hey bro! Ki obostha?";
+      return res.status(200).json({ reply: greetingReply });
+    }
+
     const asksIdentity = /(who are you|what are you|who is abul|what is abul|tell me about yourself|introduce yourself|your identity|your name|who (made|created|built|developed) you|who is your (creator|developer|owner|boss)|who owns you|who is behind you|who is behind abul|who do you work for|who is your master|who is talha|তুমি কে|তোমার পরিচয় কী|তোমার নাম কী|নিজের সম্পর্কে বল|কে তোমাকে (বানিয়েছে|তৈরি করেছে)|তোমাকে কে (বানিয়েছে|তৈরি করেছে)|কে তোমার (স্রষ্টা|নির্মাতা|ডেভেলপার)|তোমার (স্রষ্টা|নির্মাতা|ডেভেলপার) কে|তোমার মালিক কে|তোমার বস কে|তুমি কার|তালহা কে|তালহা ভাই কে|তালহা স্যার কে|বঙ্গবল্টু কে)/i.test(latest);
 
     if (asksIdentity) {
