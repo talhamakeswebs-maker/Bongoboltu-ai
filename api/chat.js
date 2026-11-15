@@ -65,8 +65,10 @@ Keep answers useful and naturally sized. For Bangla, use clear, natural Bengali 
 
 const PRIMARY_MODEL = "gemini-3.8-flash";
 const FALLBACK_MODELS = ["gemini-3.5-flash-lite"];
-const REQUEST_TIMEOUT_MS = 12000;
-const TOTAL_PROVIDER_BUDGET_MS = 36000;
+const REQUEST_TIMEOUT_MS = 8000;
+const TOTAL_PROVIDER_BUDGET_MS = 16000;
+const GROQ_MODEL = "openai/gpt-oss-120b";
+const GROQ_TIMEOUT_MS = 12000;
 const MAX_MESSAGES = 20;
 const MAX_MESSAGE_CHARS = 6000;
 const MAX_TOTAL_INPUT_CHARS = 48000;
@@ -161,6 +163,68 @@ async function callModel(model, apiKey, contents, language) {
   }
 }
 
+async function callGroq(apiKey, contents, language) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), GROQ_TIMEOUT_MS);
+  const messages = [
+    { role: "system", content: SYSTEM_PROMPT + "\\n\\nLANGUAGE PREFERENCE: " + language },
+    ...contents.map((message) => ({
+      role: message.role === "model" ? "assistant" : "user",
+      content: message.parts.map((part) => part.text || "").join("")
+    }))
+  ];
+
+  try {
+    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer " + apiKey
+      },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model: GROQ_MODEL,
+        messages,
+        max_completion_tokens: 2048,
+        reasoning_effort: "low"
+      })
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      console.error("Groq response error", {
+        model: GROQ_MODEL,
+        status: response.status,
+        message: data.error && data.error.message ? data.error.message : "No provider message"
+      });
+      return { ok: false, status: response.status, data };
+    }
+
+    const reply = data.choices && data.choices[0] && data.choices[0].message
+      ? data.choices[0].message.content
+      : "";
+    return {
+      ok: true,
+      status: response.status,
+      data: {
+        candidates: [{
+          content: { parts: [{ text: typeof reply === "string" ? reply : "" }] },
+          finishReason: null
+        }]
+      }
+    };
+  } catch (error) {
+    const timedOut = error && error.name === "AbortError";
+    console.error("Groq request failed", {
+      model: GROQ_MODEL,
+      reason: timedOut ? "Request timed out" : (error.message || "Network error")
+    });
+    return { ok: false, status: timedOut ? 504 : 502, data: {} };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 module.exports = async function handler(req, res) {
   res.setHeader("Cache-Control", "no-store");
 
@@ -171,7 +235,8 @@ module.exports = async function handler(req, res) {
 
   const apiKey = process.env.GEMINI_API_KEY;
   const backupApiKey = process.env.GEMINI_API_KEY_BACKUP;
-  if (!apiKey && !backupApiKey) {
+  const groqApiKey = process.env.GROQ_API_KEY;
+  if (!apiKey && !backupApiKey && !groqApiKey) {
     return res.status(503).json({
       error: "No AI provider key is configured on the server."
     });
@@ -205,7 +270,7 @@ module.exports = async function handler(req, res) {
 
     if (asksIdentity) {
       const identityReply = body.language === "bn"
-        ? "আমি বঙ্গবল্টু AI, তালহা স্যারের কামলা! আমাকে তৈরি ও ডেভেলপ করেছেন Talha Muttakin, যিনি Talha Bhai নামেও পরিচিত।"
+        ? "আমি Abul AI, তালহা স্যারের কামলা! আমাকে তৈরি ও ডেভেলপ করেছেন Talha Muttakin, যিনি Talha Bhai নামেও পরিচিত।"
         : body.language === "en"
           ? "I'm Abul AI, Talha Sir's kamla, bro. I was created and developed by Talha Muttakin, aka Talha Bhai."
           : "Abul AI, bro. Ami Talha Sir er kamla! আমাকে তৈরি ও ডেভেলপ করেছেন Talha Muttakin, aka Talha Bhai.";
@@ -258,9 +323,17 @@ module.exports = async function handler(req, res) {
       if (routeSucceeded || Date.now() - providerStartedAt >= TOTAL_PROVIDER_BUDGET_MS) break;
     }
 
-    // Report quota exhaustion only when every attempted route was rate-limited.
+    // Report quota exhaustion only when every attempted Gemini route was rate-limited.
     if (!routeSucceeded && failedStatuses.length && failedStatuses.every((status) => status === 429)) {
       result.status = 429;
+    }
+
+    // Groq is an independent provider, so it can still answer when Gemini is down,
+    // rate-limited, misconfigured, or times out.
+    if (!result.ok && groqApiKey) {
+      console.warn("Gemini routes unavailable; switching to Groq", { status: result.status });
+      result = await callGroq(groqApiKey, contents, language);
+      providerUsed = "Groq (" + GROQ_MODEL + ")";
     }
 
     if (!result.ok) {
@@ -320,6 +393,18 @@ module.exports = async function handler(req, res) {
       console.warn("Primary Gemini key returned no usable text; attempting backup key");
       result = await callModel(PRIMARY_MODEL, backupApiKey, contents, language);
       providerUsed = "Gemini backup";
+      candidate = result.ok && result.data && Array.isArray(result.data.candidates)
+        ? result.data.candidates[0]
+        : null;
+      reply = candidate && candidate.content && Array.isArray(candidate.content.parts)
+        ? candidate.content.parts.map((part) => typeof part.text === "string" ? part.text : "").join("").trim()
+        : "";
+    }
+
+    if (!reply && !wasSafetyBlocked && groqApiKey && !providerUsed.startsWith("Groq")) {
+      console.warn("Gemini returned no usable text; switching to Groq");
+      result = await callGroq(groqApiKey, contents, language);
+      providerUsed = "Groq (" + GROQ_MODEL + ")";
       candidate = result.ok && result.data && Array.isArray(result.data.candidates)
         ? result.data.candidates[0]
         : null;
