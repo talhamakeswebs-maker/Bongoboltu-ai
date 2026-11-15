@@ -95,6 +95,36 @@ function normalizeMessages(messages) {
   return recent;
 }
 
+function getAdultModeState(messages) {
+  let active = false;
+  let ageConfirmed = false;
+
+  if (!Array.isArray(messages)) return { active, ageConfirmed };
+
+  for (const message of messages) {
+    if (!message || message.role !== "user" || typeof message.content !== "string") continue;
+    const text = message.content.trim();
+
+    const startMode = /\b(?:start|activate|enable|turn on)\s+(?:the\s+)?(?:18\+|adult)\s+mode\b|\b(?:18\+|adult)\s+mode\s+(?:on|start|activate)\b/i.test(text);
+    const stopMode = /\b(?:stop|exit|disable|turn off|leave)\s+(?:the\s+)?(?:18\+|adult)\s+mode\b|\b(?:18\+|adult)\s+mode\s+(?:off|stop|exit)\b/i.test(text);
+    const confirmsAdult = /\b(?:i am|i'm|im)\s+(?:over\s+18|18\s*\+|18 years old or older|an adult)\b/i.test(text);
+
+    if (stopMode) {
+      active = false;
+      ageConfirmed = false;
+      continue;
+    }
+    if (startMode) {
+      active = true;
+      ageConfirmed = confirmsAdult;
+      continue;
+    }
+    if (active && confirmsAdult) ageConfirmed = true;
+  }
+
+  return { active, ageConfirmed };
+}
+
 function shouldTryFallback(status) {
   // Retry through the independent provider for transient failures and broken
   // primary credentials/model configuration. Request validation happens before
@@ -118,7 +148,7 @@ async function callModel(model, apiKey, contents, language) {
       signal: controller.signal,
       body: JSON.stringify({
         systemInstruction: {
-          parts: [{ text: SYSTEM_PROMPT + "\n\nLANGUAGE PREFERENCE: " + language }]
+          parts: [{ text: SYSTEM_PROMPT + (adultMode.active ? "\n\n18+ MODE (OPT-IN ONLY): This mode was explicitly started by the user in this conversation. If the user has not confirmed they are 18 or older, ask them to confirm before any mature content and keep the conversation non-sexual until they do. Once confirmed, allow adult flirtation, suggestive humour, mature relationship and sexual topics, and non-graphic sensual fictional roleplay between consenting adults. Keep it respectful, consensual, non-coercive, and non-explicit; do not produce graphic sexual descriptions. Never involve minors. Do not introduce adult content unless the user leads it. If the user asks to stop or exit 18+ mode, acknowledge and return to the normal Bongoboltu personality immediately." : "") + "\n\nLANGUAGE PREFERENCE: " + language }]
         },
         contents,
         generationConfig: {
@@ -190,6 +220,8 @@ module.exports = async function handler(req, res) {
           : "Bongoboltu AI, bro. Ami Talha Sir er kamla! আমাকে তৈরি ও ডেভেলপ করেছেন Talha Muttakin, aka Talha Bhai.";
       return res.status(200).json({ reply: identityReply });
     }
+
+    const adultMode = getAdultModeState(body.messages);
 
     const language = body.language === "bn"
       ? "Bangla only"
