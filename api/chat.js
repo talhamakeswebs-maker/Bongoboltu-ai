@@ -104,36 +104,6 @@ function normalizeMessages(messages) {
   return recent;
 }
 
-function getAdultModeState(messages) {
-  let active = false;
-  let ageConfirmed = false;
-
-  if (!Array.isArray(messages)) return { active, ageConfirmed };
-
-  for (const message of messages) {
-    if (!message || message.role !== "user" || typeof message.content !== "string") continue;
-    const text = message.content.trim();
-
-    const startMode = /\b(?:start|activate|enable|turn on)\s+(?:the\s+)?(?:18\+|adult)\s+mode\b|\b(?:18\+|adult)\s+mode\s+(?:on|start|activate)\b/i.test(text);
-    const stopMode = /\b(?:stop|exit|disable|turn off|leave)\s+(?:the\s+)?(?:18\+|adult)\s+mode\b|\b(?:18\+|adult)\s+mode\s+(?:off|stop|exit)\b/i.test(text);
-    const confirmsAdult = /\b(?:i am|i'm|im)\s+(?:over\s+18|18\s*\+|18 years old or older|an adult)\b/i.test(text);
-
-    if (stopMode) {
-      active = false;
-      ageConfirmed = false;
-      continue;
-    }
-    if (startMode) {
-      active = true;
-      ageConfirmed = confirmsAdult;
-      continue;
-    }
-    if (active && confirmsAdult) ageConfirmed = true;
-  }
-
-  return { active, ageConfirmed };
-}
-
 function shouldTryFallback(status) {
   // Retry through the independent provider for transient failures and broken
   // primary credentials/model configuration. Request validation happens before
@@ -141,7 +111,7 @@ function shouldTryFallback(status) {
   return [400, 401, 403, 404, 408, 429, 500, 502, 503, 504].includes(status);
 }
 
-async function callModel(model, apiKey, contents, language, adultMode) {
+async function callModel(model, apiKey, contents, language) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   const url = "https://generativelanguage.googleapis.com/v1beta/models/" +
@@ -157,7 +127,7 @@ async function callModel(model, apiKey, contents, language, adultMode) {
       signal: controller.signal,
       body: JSON.stringify({
         systemInstruction: {
-          parts: [{ text: SYSTEM_PROMPT + (adultMode.active ? (adultMode.ageConfirmed ? "\n\n18+ MODE ACTIVE (EXPLICIT OPT-IN): The user explicitly started this mode and self-confirmed they are 18 or older. Do not act confused or give a generic refusal merely because a topic involves sex. You may discuss adult relationships, intimacy, consent, sexual wellbeing, contraception, STI prevention, and sexual health in a factual, mature, non-judgmental way. You may use adult humour, flirtatious language, suggestive conversation, and non-graphic sensual fictional roleplay between consenting adults. Keep any roleplay non-explicit: do not narrate graphic sexual acts or provide pornographic descriptions. Never involve minors, coercion, exploitation, or non-consensual activity. Do not introduce sexual content unless the user leads it. If the user asks to stop or exit 18+ mode, acknowledge and return to the normal Bongoboltu personality immediately." : "\n\n18+ MODE PENDING AGE CONFIRMATION: The user explicitly started this mode but has not confirmed they are 18 or older. Ask them to confirm they are 18+ before any mature content. Until then, keep the conversation in the normal non-sexual personality. Do not infer age.") : "") + "\n\nLANGUAGE PREFERENCE: " + language }]
+          parts: [{ text: SYSTEM_PROMPT + "\n\nLANGUAGE PREFERENCE: " + language }]
         },
         contents,
         generationConfig: {
@@ -230,7 +200,6 @@ module.exports = async function handler(req, res) {
       return res.status(200).json({ reply: identityReply });
     }
 
-    const adultMode = getAdultModeState(body.messages);
 
     const language = body.language === "bn"
       ? "Bangla only"
@@ -262,7 +231,7 @@ module.exports = async function handler(req, res) {
           console.warn("Gemini failover time budget reached; stopping retries");
           break;
         }
-        result = await callModel(model, keyCandidate.key, contents, language, adultMode);
+        result = await callModel(model, keyCandidate.key, contents, language);
         providerUsed = keyCandidate.name + " (" + model + ")";
         if (result.ok) {
           routeSucceeded = true;
@@ -337,7 +306,7 @@ module.exports = async function handler(req, res) {
 
     if (!reply && !wasSafetyBlocked && providerUsed.startsWith("Gemini primary") && backupApiKey) {
       console.warn("Primary Gemini key returned no usable text; attempting backup key");
-      result = await callModel(PRIMARY_MODEL, backupApiKey, contents, language, adultMode);
+      result = await callModel(PRIMARY_MODEL, backupApiKey, contents, language);
       providerUsed = "Gemini backup";
       candidate = result.ok && result.data && Array.isArray(result.data.candidates)
         ? result.data.candidates[0]
