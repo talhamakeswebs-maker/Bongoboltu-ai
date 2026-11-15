@@ -32,6 +32,7 @@ header{height:68px;padding:0 28px;border-bottom:1px solid var(--line);display:fl
 .bubble{padding:12px 15px;border-radius:4px 13px 13px 13px;background:var(--surface);border:1px solid var(--line);line-height:1.75;font-size:13px;white-space:pre-wrap;max-width:100%}
 .user .bubble{background:#edf0eb;border-color:#edf0eb;border-radius:13px 4px 13px 13px}
 .bubble small{display:none}
+.bubble a{color:var(--accent);text-decoration:underline;text-underline-offset:2px;overflow-wrap:anywhere}.bubble a:hover{opacity:.75}
 .typing{color:var(--muted);font-size:12px;padding:10px}
 .composer-wrap{padding:14px 28px 20px;border-top:1px solid var(--line);background:var(--bg)}
 .composer{max-width:720px;margin:auto;display:flex;align-items:flex-end;gap:10px;background:var(--surface);border:1px solid #e4e4df;border-radius:12px;padding:9px 10px 9px 15px}
@@ -77,10 +78,25 @@ header{height:68px;padding:0 28px;border-bottom:1px solid var(--line);display:fl
 <script>
 const chat=document.getElementById('chat'),welcome=document.getElementById('welcome'),input=document.getElementById('prompt'),form=document.getElementById('form'),send=document.getElementById('send'),lang=document.getElementById('language');
 let history=[];
+function renderRichText(element,text){
+ const pattern=/\\[([^\\]]+)\\]\\((https?:\\/\\/[^\\s)]+)\\)|(https?:\\/\\/[^\\s<]+)/g;
+ let last=0,match;
+ while((match=pattern.exec(text))!==null){
+  element.append(document.createTextNode(text.slice(last,match.index)));
+  let label=match[1]||match[3],url=match[2]||match[3],suffix='';
+  if(!match[1]){while(/[.,!?;:)]$/.test(url)){suffix=url.slice(-1)+suffix;url=url.slice(0,-1)}}
+  if(url){
+   const a=document.createElement('a');a.href=url;a.textContent=label;a.target='_blank';a.rel='noopener noreferrer';a.referrerPolicy='no-referrer';element.append(a);
+   if(suffix)element.append(document.createTextNode(suffix));
+  }else{element.append(document.createTextNode(match[0]))}
+  last=pattern.lastIndex;
+ }
+ element.append(document.createTextNode(text.slice(last)));
+}
 function addMessage(role,text,meta=''){
  const row=document.createElement('div');row.className='message'+(role==='user'?' user':'');
  const avatar=document.createElement('div');avatar.className='avatar';avatar.textContent=role==='user'?'You':'';
- const bubble=document.createElement('div');bubble.className='bubble';bubble.textContent=text;
+ const bubble=document.createElement('div');bubble.className='bubble';renderRichText(bubble,text);
  if(meta){const small=document.createElement('small');small.textContent=meta;bubble.append(small)}
  row.append(avatar,bubble);chat.append(row);chat.scrollTop=chat.scrollHeight;return row;
 }
