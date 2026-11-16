@@ -204,81 +204,6 @@ async function callModel(model, apiKey, contents, language, systemPrompt = SYSTE
 }
 
 
-const GROK_MODEL = "grok-4.7";
-const GROK_TIMEOUT_MS = 5000;
-
-async function callGrok(apiKey, contents, language, systemPrompt = SYSTEM_PROMPT) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), GROK_TIMEOUT_MS);
-  const input = [
-    { role: "system", content: systemPrompt + "\n\nLANGUAGE PREFERENCE: " + language },
-    ...contents.map((message) => ({
-      role: message.role === "model" ? "assistant" : "user",
-      content: message.parts.map((part) => part.text || "").join("")
-    }))
-  ];
-
-  try {
-    const response = await fetch("https://api.x.ai/v1/responses", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: "Bearer " + apiKey
-      },
-      signal: controller.signal,
-      body: JSON.stringify({
-        model: GROK_MODEL,
-        input,
-        reasoning: { effort: "low" },
-        max_output_tokens: 2048,
-        temperature: 0.7,
-        top_p: 0.95,
-        store: false
-      })
-    });
-
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      console.error("Grok response error", {
-        model: GROK_MODEL,
-        status: response.status,
-        message: data.error && data.error.message ? data.error.message : "No provider message"
-      });
-      return { ok: false, status: response.status, data };
-    }
-
-    const reply = Array.isArray(data.output)
-      ? data.output
-          .filter((item) => item && item.type === "message" && Array.isArray(item.content))
-          .flatMap((item) => item.content)
-          .filter((part) => part && (part.type === "output_text" || part.type === "text"))
-          .map((part) => typeof part.text === "string" ? part.text : "")
-          .join("")
-          .trim()
-      : "";
-
-    return {
-      ok: true,
-      status: response.status,
-      data: {
-        candidates: [{
-          content: { parts: [{ text: reply }] },
-          finishReason: data.status === "incomplete" ? "MAX_TOKENS" : "STOP"
-        }]
-      }
-    };
-  } catch (error) {
-    const timedOut = error && error.name === "AbortError";
-    console.error("Grok request failed", {
-      model: GROK_MODEL,
-      reason: timedOut ? "Request timed out" : (error.message || "Network error")
-    });
-    return { ok: false, status: timedOut ? 504 : 502, data: {} };
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
 async function callGroq(apiKey, contents, language, systemPrompt = SYSTEM_PROMPT) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), GROQ_TIMEOUT_MS);
@@ -352,8 +277,7 @@ module.exports = async function handler(req, res) {
   const apiKey = process.env.GEMINI_API_KEY;
   const backupApiKey = process.env.GEMINI_API_KEY_BACKUP;
   const groqApiKey = process.env.GROQ_API_KEY;
-  const xaiApiKey = process.env.XAI_API_KEY;
-  if (!apiKey && !backupApiKey && !groqApiKey && !xaiApiKey) {
+  if (!apiKey && !backupApiKey && !groqApiKey) {
     return res.status(503).json({
       error: "No AI provider key is configured on the server."
     });
@@ -405,19 +329,11 @@ module.exports = async function handler(req, res) {
           : "";
     const requestSystemPrompt = SYSTEM_PROMPT + sessionPrompt;
 
-    // Grok is the primary provider. Gemini and Groq remain independent fallbacks.
-    let result = xaiApiKey
-      ? await callGrok(xaiApiKey, contents, language, requestSystemPrompt)
+    // Groq is the independent secondary provider. Gemini remains the final fallback.
+    let result = groqApiKey
+      ? await callGroq(groqApiKey, contents, language, requestSystemPrompt)
       : { ok: false, status: 503, data: {} };
-    let providerUsed = xaiApiKey ? "Grok (" + GROK_MODEL + ")" : "Grok (API key missing)";
-
-    // Prefer the independent Groq route before Gemini. This avoids wasting
-    // the serverless execution window on a busy or quota-limited Gemini model.
-    if (!result.ok && groqApiKey) {
-      console.warn("Grok unavailable; switching to Groq", { status: result.status });
-      result = await callGroq(groqApiKey, contents, language, requestSystemPrompt);
-      providerUsed = "Groq (" + GROQ_MODEL + ")";
-    }
+    let providerUsed = groqApiKey ? "Groq (" + GROQ_MODEL + ")" : "Groq (API key missing)";
 
     // Gemini is the final fallback. Keep retries bounded for serverless runtimes.
     const keyCandidates = [
@@ -507,19 +423,6 @@ module.exports = async function handler(req, res) {
       initialFinishReason === "SAFETY" ||
       initialFinishReason === "RECITATION" ||
       initialFinishReason === "BLOCKLIST";
-
-    if (!reply && !wasSafetyBlocked && !providerUsed.startsWith("Gemini") && !providerUsed.startsWith("Groq") && (apiKey || backupApiKey)) {
-      console.warn("Grok returned no usable text; attempting Gemini fallback");
-      const fallbackKey = apiKey || backupApiKey;
-      result = await callModel(PRIMARY_MODEL, fallbackKey, contents, language, requestSystemPrompt);
-      providerUsed = apiKey ? "Gemini primary" : "Gemini backup";
-      candidate = result.ok && result.data && Array.isArray(result.data.candidates)
-        ? result.data.candidates[0]
-        : null;
-      reply = candidate && candidate.content && Array.isArray(candidate.content.parts)
-        ? candidate.content.parts.map((part) => typeof part.text === "string" ? part.text : "").join("").trim()
-        : "";
-    }
 
     if (!reply && !wasSafetyBlocked && providerUsed.startsWith("Gemini primary") && backupApiKey) {
       console.warn("Primary Gemini key returned no usable text; attempting backup key");
