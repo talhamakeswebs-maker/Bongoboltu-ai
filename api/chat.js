@@ -140,12 +140,12 @@ MALIHA CHACHI PROFILE — CURRENT IMPLEMENTATION OVERRIDE:
 - Do not claim to remember details that are absent from the supplied archive or current conversation.
 `;
 
-const PRIMARY_MODEL = "gemini-3.5-flash";
-const FALLBACK_MODELS = ["gemini-3.5-flash-lite"];
-const REQUEST_TIMEOUT_MS = 4300;
-const TOTAL_PROVIDER_BUDGET_MS = 5000;
+const PRIMARY_MODEL = "gemini-2.5-flash";
+const FALLBACK_MODELS = ["gemini-2.5-flash-lite"];
+const REQUEST_TIMEOUT_MS = 3200;
+const TOTAL_PROVIDER_BUDGET_MS = 7200;
 const GROQ_MODEL = "openai/gpt-oss-120b";
-const GROQ_TIMEOUT_MS = 4200;
+const GROQ_TIMEOUT_MS = 3200;
 const MAX_MESSAGES = 12;
 const MAX_MESSAGE_CHARS = 4000;
 const MAX_TOTAL_INPUT_CHARS = 12000;
@@ -210,7 +210,7 @@ async function callModel(model, apiKey, contents, language, systemPrompt = SYSTE
         },
         contents,
         generationConfig: {
-          maxOutputTokens: 1024,
+          maxOutputTokens: 512,
           thinkingConfig: { thinkingLevel: "low" }
         }
       })
@@ -263,7 +263,7 @@ async function callGroq(apiKey, contents, language, systemPrompt = SYSTEM_PROMPT
       body: JSON.stringify({
         model: GROQ_MODEL,
         messages,
-        max_completion_tokens: 768,
+        max_completion_tokens: 512,
         reasoning_effort: "low"
       })
     });
@@ -366,13 +366,11 @@ module.exports = async function handler(req, res) {
           : "";
     const requestSystemPrompt = SYSTEM_PROMPT + sessionPrompt;
 
-    // Groq is the independent secondary provider. Gemini remains the final fallback.
-    let result = groqApiKey
-      ? await callGroq(groqApiKey, contents, language, requestSystemPrompt)
-      : { ok: false, status: 503, data: {} };
-    let providerUsed = groqApiKey ? "Groq (" + GROQ_MODEL + ")" : "Groq (API key missing)";
+    // Gemini is the primary route. Groq is only used if Gemini is unavailable.
+    let result = { ok: false, status: 503, data: {} };
+    let providerUsed = "Gemini (not attempted)";
 
-    // Gemini is the final fallback. Keep retries bounded for serverless runtimes.
+    // Keep provider attempts inside the serverless execution budget.
     const keyCandidates = [
       { key: apiKey, name: "Gemini primary" },
       { key: backupApiKey, name: "Gemini backup" }
@@ -402,6 +400,13 @@ module.exports = async function handler(req, res) {
         }
         if (routeSucceeded || Date.now() - providerStartedAt >= TOTAL_PROVIDER_BUDGET_MS) break;
       }
+    }
+
+    if (!routeSucceeded && groqApiKey && Date.now() - providerStartedAt < TOTAL_PROVIDER_BUDGET_MS) {
+      result = await callGroq(groqApiKey, contents, language, requestSystemPrompt);
+      providerUsed = "Groq (" + GROQ_MODEL + ")";
+      failedStatuses.push(result.status);
+      routeSucceeded = result.ok;
     }
 
     if (!routeSucceeded && failedStatuses.length && failedStatuses.every((status) => status === 429)) {
