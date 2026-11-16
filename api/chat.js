@@ -399,7 +399,7 @@ module.exports = async function handler(req, res) {
     const sessionPrompt = isMalihaSession
       ? "\n\nCURRENT SESSION IDENTITY: The user has confirmed she is Maliha Chachi.\nPRIOR MALIHA CONVERSATION ARCHIVE (browser-local; use only as relevant context):\n" + (malihaMemory || "No previous archive is available yet.")
       : isNewSession && isMalihaCandidate
-        ? "\n\nNEW CHAT IDENTITY CHECK: The first message suggests the user may be Maliha Chachi. Do not load or reveal her archive yet. Casually ask one brief confirmation such as, \\\"Maliha Chachi, tumi toh?\\\". Do not make it sound like security verification."
+        ? "\n\nNEW CHAT IDENTITY CHECK: The first message suggests the user may be Maliha Chachi. Do not load or reveal her archive yet. Casually ask one brief confirmation using a natural phrase like Maliha Chachi, tumi toh? Do not make it sound like security verification."
         : isNewSession
           ? "\n\nNEW CHAT SESSION: The user has not identified themselves yet. If their first message is only a greeting or identity is unclear, greet naturally and ask one brief neutral question about who is chatting. Do not assume the user is Maliha."
           : "";
