@@ -80,6 +80,7 @@ const chat=document.getElementById('chat'),welcome=document.getElementById('welc
 let history=[];
 const MALIHA_MEMORY_KEY='abul_maliha_archive_v1';
 let malihaActive=false;
+let malihaPending=false;
 let sessionStarted=false;
 function readMalihaArchive(){
  try{const value=JSON.parse(localStorage.getItem(MALIHA_MEMORY_KEY)||'[]');return Array.isArray(value)?value:[]}catch{return []}
@@ -95,10 +96,14 @@ function saveMalihaTurn(){
  try{localStorage.setItem(MALIHA_MEMORY_KEY,JSON.stringify(archive.slice(-80)))}catch{}
 }
 function identifiesMaliha(text){
- const value=String(text||'').toLowerCase();
- const selfIntro=/(\bi\s*(?:am|'m)\s+(?:maliha|maliha\s+chachi)\b|\bthis\s+is\s+maliha\b|\bmaliha\s+here\b|\bami\s+maliha\b|\bamar\s+nam\s+maliha\b|আমি\s+মালিহা|আমার\s+নাম\s+মালিহা)/i.test(value);
+ const value=String(text||'').toLowerCase().trim();
+ const selfIntro=/(\bi\s*(?:am|'m)\s+(?:maliha|maliha\s+chachi)\b|\bmy\s+name\s+is\s+maliha\b|\bthis\s+is\s+maliha\b|\bmaliha\s+here\b|\bmaliha(?:\s+chachi)?\s+bolchi\b|\bami\s+(?:maliha|talhar\s+chachi)\b|\bamar\s+nam\s+maliha\b|\btalhar\s+chachi\b|\btalha\s+chachar\s+chachi\b|আমি\s+মালিহা|আমার\s+নাম\s+মালিহা|আমি\s+তালহার\s+চাচি)/i.test(value);
+ const shortIntro=/^(maliha|maliha\s+chachi|ami\s+maliha|আমি\s+মালিহা)[!.?,\s]*$/i.test(value);
  const chachaAddress=/(\btalha\s+chacha(?:r|ke|re)?\b|তালহা\s+চাচা(?:র|কে|রে)?)/i.test(value);
- return selfIntro||chachaAddress;
+ return selfIntro||shortIntro||chachaAddress;
+}
+function confirmsMaliha(text){
+ return /^(yes|yeah|yep|yup|correct|that's me|thats me|right|haan|ha|hmm|ji|হ্যাঁ|জি|ঠিক|আমিই|ami)[!.?,\s]*$/i.test(String(text||'').trim());
 }
 function clearMalihaMemory(){try{localStorage.removeItem(MALIHA_MEMORY_KEY)}catch{}}
 function renderRichText(element,text){
@@ -126,14 +131,14 @@ function addMessage(role,text,meta=''){
 function showTyping(){const row=document.createElement('div');row.className='message';row.id='typing';const av=document.createElement('div');av.className='avatar';const b=document.createElement('div');b.className='bubble typing';b.textContent=lang.value==='bn'?'ভাবছি…':'Thinking…';row.append(av,b);chat.append(row);chat.scrollTop=chat.scrollHeight}
 async function submit(q){
  q=(q||input.value).trim();if(!q||send.disabled)return;
- if(identifiesMaliha(q))malihaActive=true;
+ if(!sessionStarted&&identifiesMaliha(q)){malihaPending=true;}else if(malihaPending&&confirmsMaliha(q)){malihaActive=true;malihaPending=false;}else if(identifiesMaliha(q)){malihaActive=true;}
  welcome.classList.add('hidden');input.value='';input.style.height='auto';addMessage('user',q);history.push({role:'user',content:q});send.disabled=true;showTyping();
  try{
   const controller=new AbortController();
   const requestTimeout=setTimeout(()=>controller.abort(),45000);
   let response;
   try{
-   response=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:history,language:lang.value,isMalihaSession:malihaActive,isNewSession:!sessionStarted,malihaMemory:malihaActive?getMalihaMemoryContext():''}),signal:controller.signal});
+   response=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:history,language:lang.value,isMalihaSession:malihaActive,isMalihaCandidate:malihaPending,isNewSession:!sessionStarted,malihaMemory:malihaActive?getMalihaMemoryContext():''}),signal:controller.signal});
   }finally{clearTimeout(requestTimeout)}
   const responseText=await response.text();
   let data={};
@@ -150,7 +155,7 @@ async function submit(q){
 form.addEventListener('submit',e=>{e.preventDefault();submit()});
 input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();submit()}});
 input.addEventListener('input',()=>{input.style.height='auto';input.style.height=Math.min(input.scrollHeight,130)+'px'});
-document.getElementById('newChat').addEventListener('click',()=>{history=[];malihaActive=false;sessionStarted=false;chat.querySelectorAll('.message').forEach(x=>x.remove());welcome.classList.remove('hidden');input.focus()});
+document.getElementById('newChat').addEventListener('click',()=>{history=[];malihaActive=false;malihaPending=false;sessionStarted=false;chat.querySelectorAll('.message').forEach(x=>x.remove());welcome.classList.remove('hidden');input.focus()});
 document.getElementById('clearMemory').addEventListener('click',()=>{if(window.confirm('Clear Abul’s saved Maliha conversation memory from this browser? This cannot be undone.')){clearMalihaMemory();window.alert('Saved browser memory cleared.');}});
 lang.addEventListener('change',()=>{input.placeholder=lang.value==='bn'?'আপনার প্রশ্ন লিখুন…':lang.value==='en'?'Talk to Abul…':'Bolo bro, ki jante chao?'});
 </script>
