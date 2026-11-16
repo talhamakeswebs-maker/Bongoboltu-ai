@@ -142,13 +142,13 @@ MALIHA CHACHI PROFILE — CURRENT IMPLEMENTATION OVERRIDE:
 
 const PRIMARY_MODEL = "gemini-3.5-flash";
 const FALLBACK_MODELS = ["gemini-3.5-flash-lite"];
-const REQUEST_TIMEOUT_MS = 6500;
-const TOTAL_PROVIDER_BUDGET_MS = 7000;
+const REQUEST_TIMEOUT_MS = 4300;
+const TOTAL_PROVIDER_BUDGET_MS = 5000;
 const GROQ_MODEL = "openai/gpt-oss-120b";
-const GROQ_TIMEOUT_MS = 3000;
-const MAX_MESSAGES = 20;
-const MAX_MESSAGE_CHARS = 6000;
-const MAX_TOTAL_INPUT_CHARS = 48000;
+const GROQ_TIMEOUT_MS = 4200;
+const MAX_MESSAGES = 12;
+const MAX_MESSAGE_CHARS = 4000;
+const MAX_TOTAL_INPUT_CHARS = 12000;
 
 function normalizeMessages(messages) {
   if (!Array.isArray(messages)) return null;
@@ -210,7 +210,7 @@ async function callModel(model, apiKey, contents, language, systemPrompt = SYSTE
         },
         contents,
         generationConfig: {
-          maxOutputTokens: 2048,
+          maxOutputTokens: 1024,
           thinkingConfig: { thinkingLevel: "low" }
         }
       })
@@ -263,7 +263,7 @@ async function callGroq(apiKey, contents, language, systemPrompt = SYSTEM_PROMPT
       body: JSON.stringify({
         model: GROQ_MODEL,
         messages,
-        max_completion_tokens: 2048,
+        max_completion_tokens: 768,
         reasoning_effort: "low"
       })
     });
