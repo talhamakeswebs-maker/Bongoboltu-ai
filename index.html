@@ -133,7 +133,7 @@ function addMessage(role,text,meta=''){
 function showTyping(){const row=document.createElement('div');row.className='message';row.id='typing';const av=document.createElement('div');av.className='avatar';const b=document.createElement('div');b.className='bubble typing';b.textContent=lang.value==='bn'?'ভাবছি…':'Thinking…';row.append(av,b);chat.append(row);chat.scrollTop=chat.scrollHeight}
 async function submit(q){
  q=(q||input.value).trim();if(!q||send.disabled)return;
- if(!sessionStarted&&identifiesMaliha(q)){malihaPending=true;}else if(malihaPending&&confirmsMaliha(q)){malihaActive=true;malihaPending=false;}else if(identifiesMaliha(q)){malihaActive=true;}
+ if(!sessionStarted&&identifiesMaliha(q)){malihaPending=true;}else if(malihaPending&&confirmsMaliha(q)){malihaActive=true;malihaPending=false;}else if(identifiesMaliha(q)){malihaActive=true;malihaPending=false;}
  welcome.classList.add('hidden');input.value='';input.style.height='auto';addMessage('user',q);history.push({role:'user',content:q});send.disabled=true;showTyping();
  try{
   const controller=new AbortController();
