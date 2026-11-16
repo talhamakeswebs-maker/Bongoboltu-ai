@@ -103,7 +103,9 @@ function identifiesMaliha(text){
  return selfIntro||shortIntro||chachaAddress;
 }
 function confirmsMaliha(text){
- return /^(yes|yeah|yep|yup|correct|that's me|thats me|right|haan|ha|hmm|ji|হ্যাঁ|জি|ঠিক|আমিই|ami)[!.?,\s]*$/i.test(String(text||'').trim());
+ const value=String(text||'').trim();
+ if(/^(no|nope|not me|ami na|না|নাহ)[!.?,\\s]*$/i.test(value)){malihaPending=false;return false;}
+ return /^(yes|yeah|yep|yup|correct|that's me|thats me|right|haan|ha|hmm|ji|হ্যাঁ|জি|ঠিক|আমিই|ami)(?:[!.?,\\s].*)?$/i.test(value);
 }
 function clearMalihaMemory(){try{localStorage.removeItem(MALIHA_MEMORY_KEY)}catch{}}
 function renderRichText(element,text){
