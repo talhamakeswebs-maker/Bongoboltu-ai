@@ -55,7 +55,7 @@ header{height:68px;padding:0 28px;border-bottom:1px solid var(--line);display:fl
 <header>
 <div class="headtitle">Abul AI</div>
 <div class="controls">
-<button class="newchat" id="newChat" type="button">New chat</button>
+<button class="newchat" id="clearMemory" type="button" title="Clear saved Maliha conversation memory">Clear memory</button><button class="newchat" id="newChat" type="button">New chat</button>
 <label class="pill"><select id="language" aria-label="Language"><option value="both">বাংলা + English</option><option value="bn">বাংলা</option><option value="en">English</option></select></label>
 </div>
 </header>
@@ -78,6 +78,29 @@ header{height:68px;padding:0 28px;border-bottom:1px solid var(--line);display:fl
 <script>
 const chat=document.getElementById('chat'),welcome=document.getElementById('welcome'),input=document.getElementById('prompt'),form=document.getElementById('form'),send=document.getElementById('send'),lang=document.getElementById('language');
 let history=[];
+const MALIHA_MEMORY_KEY='abul_maliha_archive_v1';
+let malihaActive=false;
+let sessionStarted=false;
+function readMalihaArchive(){
+ try{const value=JSON.parse(localStorage.getItem(MALIHA_MEMORY_KEY)||'[]');return Array.isArray(value)?value:[]}catch{return []}
+}
+function getMalihaMemoryContext(){
+ return readMalihaArchive().map(item=>(item.role==='assistant'?'Abul: ':'Maliha: ')+String(item.content||'')).join('\n').slice(-12000);
+}
+function saveMalihaTurn(){
+ const archive=readMalihaArchive();
+ for(const item of history.slice(-2)){
+  if(item&&typeof item.content==='string')archive.push({role:item.role==='assistant'?'assistant':'user',content:item.content.slice(0,1600)});
+ }
+ try{localStorage.setItem(MALIHA_MEMORY_KEY,JSON.stringify(archive.slice(-80)))}catch{}
+}
+function identifiesMaliha(text){
+ const value=String(text||'').toLowerCase();
+ const selfIntro=/(\bi\s*(?:am|'m)\s+(?:maliha|maliha\s+chachi)\b|\bthis\s+is\s+maliha\b|\bmaliha\s+here\b|\bami\s+maliha\b|\bamar\s+nam\s+maliha\b|আমি\s+মালিহা|আমার\s+নাম\s+মালিহা)/i.test(value);
+ const chachaAddress=/(\btalha\s+chacha(?:r|ke|re)?\b|তালহা\s+চাচা(?:র|কে|রে)?)/i.test(value);
+ return selfIntro||chachaAddress;
+}
+function clearMalihaMemory(){try{localStorage.removeItem(MALIHA_MEMORY_KEY)}catch{}}
 function renderRichText(element,text){
  const pattern=/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s<]+)/g;
  let last=0,match;
@@ -103,13 +126,14 @@ function addMessage(role,text,meta=''){
 function showTyping(){const row=document.createElement('div');row.className='message';row.id='typing';const av=document.createElement('div');av.className='avatar';const b=document.createElement('div');b.className='bubble typing';b.textContent=lang.value==='bn'?'ভাবছি…':'Thinking…';row.append(av,b);chat.append(row);chat.scrollTop=chat.scrollHeight}
 async function submit(q){
  q=(q||input.value).trim();if(!q||send.disabled)return;
+ if(identifiesMaliha(q))malihaActive=true;
  welcome.classList.add('hidden');input.value='';input.style.height='auto';addMessage('user',q);history.push({role:'user',content:q});send.disabled=true;showTyping();
  try{
   const controller=new AbortController();
   const requestTimeout=setTimeout(()=>controller.abort(),45000);
   let response;
   try{
-   response=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:history,language:lang.value}),signal:controller.signal});
+   response=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:history,language:lang.value,isMalihaSession:malihaActive,isNewSession:!sessionStarted,malihaMemory:malihaActive?getMalihaMemoryContext():''}),signal:controller.signal});
   }finally{clearTimeout(requestTimeout)}
   const responseText=await response.text();
   let data={};
@@ -118,13 +142,16 @@ async function submit(q){
   if(!response.ok)throw new Error(data.error||'The AI could not respond.');
   const reply=data.reply||'I could not generate a response. Please try again.';
   history.push({role:'assistant',content:reply});addMessage('assistant',reply);
+  sessionStarted=true;
+  if(malihaActive)saveMalihaTurn();
  }catch(err){document.getElementById('typing')?.remove();const message=err.name==='AbortError'?'Taking too long, bro. Try again.':(err.message||'Connection error. Please try again.');addMessage('assistant',message);history.pop()}
  finally{send.disabled=false;input.focus()}
 }
 form.addEventListener('submit',e=>{e.preventDefault();submit()});
 input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();submit()}});
 input.addEventListener('input',()=>{input.style.height='auto';input.style.height=Math.min(input.scrollHeight,130)+'px'});
-document.getElementById('newChat').addEventListener('click',()=>{history=[];chat.querySelectorAll('.message').forEach(x=>x.remove());welcome.classList.remove('hidden');input.focus()});
+document.getElementById('newChat').addEventListener('click',()=>{history=[];malihaActive=false;sessionStarted=false;chat.querySelectorAll('.message').forEach(x=>x.remove());welcome.classList.remove('hidden');input.focus()});
+document.getElementById('clearMemory').addEventListener('click',()=>{if(window.confirm('Clear Abul’s saved Maliha conversation memory from this browser? This cannot be undone.')){clearMalihaMemory();window.alert('Saved browser memory cleared.');}});
 lang.addEventListener('change',()=>{input.placeholder=lang.value==='bn'?'আপনার প্রশ্ন লিখুন…':lang.value==='en'?'Talk to Abul…':'Bolo bro, ki jante chao?'});
 </script>
 </body>
