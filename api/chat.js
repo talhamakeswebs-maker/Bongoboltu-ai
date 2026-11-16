@@ -91,10 +91,10 @@ Keep answers useful and naturally sized. For Bangla, use clear, natural Bengali 
 
 const PRIMARY_MODEL = "gemini-3.8-flash";
 const FALLBACK_MODELS = ["gemini-3.5-flash-lite"];
-const REQUEST_TIMEOUT_MS = 8000;
-const TOTAL_PROVIDER_BUDGET_MS = 16000;
+const REQUEST_TIMEOUT_MS = 5000;
+const TOTAL_PROVIDER_BUDGET_MS = 5000;
 const GROQ_MODEL = "openai/gpt-oss-120b";
-const GROQ_TIMEOUT_MS = 12000;
+const GROQ_TIMEOUT_MS = 7000;
 const MAX_MESSAGES = 20;
 const MAX_MESSAGE_CHARS = 6000;
 const MAX_TOTAL_INPUT_CHARS = 48000;
@@ -191,13 +191,13 @@ async function callModel(model, apiKey, contents, language) {
 
 
 const GROK_MODEL = "grok-4.7";
-const GROK_TIMEOUT_MS = 15000;
+const GROK_TIMEOUT_MS = 5000;
 
 async function callGrok(apiKey, contents, language) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), GROK_TIMEOUT_MS);
   const input = [
-    { role: "system", content: SYSTEM_PROMPT + "\\n\\nLANGUAGE PREFERENCE: " + language },
+    { role: "system", content: SYSTEM_PROMPT + "\n\nLANGUAGE PREFERENCE: " + language },
     ...contents.map((message) => ({
       role: message.role === "model" ? "assistant" : "user",
       content: message.parts.map((part) => part.text || "").join("")
@@ -393,55 +393,48 @@ module.exports = async function handler(req, res) {
       : { ok: false, status: 503, data: {} };
     let providerUsed = xaiApiKey ? "Grok (" + GROK_MODEL + ")" : "Grok (API key missing)";
 
-    // Gemini fallback: try both configured keys and compatible models.
+    // Prefer the independent Groq route before Gemini. This avoids wasting
+    // the serverless execution window on a busy or quota-limited Gemini model.
+    if (!result.ok && groqApiKey) {
+      console.warn("Grok unavailable; switching to Groq", { status: result.status });
+      result = await callGroq(groqApiKey, contents, language);
+      providerUsed = "Groq (" + GROQ_MODEL + ")";
+    }
+
+    // Gemini is the final fallback. Keep retries bounded for serverless runtimes.
     const keyCandidates = [
       { key: apiKey, name: "Gemini primary" },
       { key: backupApiKey, name: "Gemini backup" }
     ].filter((item, index, all) =>
       item.key && all.findIndex((candidate) => candidate.key === item.key) === index
     );
-
     const modelCandidates = [PRIMARY_MODEL, ...FALLBACK_MODELS];
-
     const providerStartedAt = Date.now();
     const failedStatuses = [];
     let routeSucceeded = false;
 
-    // Only call Gemini when Grok is unavailable or returns an error.
     if (!result.ok) {
-    for (const keyCandidate of keyCandidates) {
-      for (const model of modelCandidates) {
-        if (Date.now() - providerStartedAt >= TOTAL_PROVIDER_BUDGET_MS) {
-          console.warn("Gemini failover time budget reached; stopping retries");
-          break;
+      for (const keyCandidate of keyCandidates) {
+        for (const model of modelCandidates) {
+          if (Date.now() - providerStartedAt >= TOTAL_PROVIDER_BUDGET_MS) break;
+          result = await callModel(model, keyCandidate.key, contents, language);
+          providerUsed = keyCandidate.name + " (" + model + ")";
+          if (result.ok) {
+            routeSucceeded = true;
+            break;
+          }
+          failedStatuses.push(result.status);
+          console.warn("Gemini route unavailable; trying next route", {
+            provider: providerUsed,
+            status: result.status
+          });
         }
-        result = await callModel(model, keyCandidate.key, contents, language);
-        providerUsed = keyCandidate.name + " (" + model + ")";
-        if (result.ok) {
-          routeSucceeded = true;
-          break;
-        }
-        failedStatuses.push(result.status);
-        console.warn("Gemini route unavailable; trying next route", {
-          provider: providerUsed,
-          status: result.status
-        });
+        if (routeSucceeded || Date.now() - providerStartedAt >= TOTAL_PROVIDER_BUDGET_MS) break;
       }
-      if (routeSucceeded || Date.now() - providerStartedAt >= TOTAL_PROVIDER_BUDGET_MS) break;
-    }
     }
 
-    // Report quota exhaustion only when every attempted Gemini route was rate-limited.
     if (!routeSucceeded && failedStatuses.length && failedStatuses.every((status) => status === 429)) {
       result.status = 429;
-    }
-
-    // Groq is an independent provider, so it can still answer when Gemini is down,
-    // rate-limited, misconfigured, or times out.
-    if (!result.ok && groqApiKey) {
-      console.warn("Grok/Gemini routes unavailable; switching to Groq", { status: result.status });
-      result = await callGroq(groqApiKey, contents, language);
-      providerUsed = "Groq (" + GROQ_MODEL + ")";
     }
 
     if (!result.ok) {
