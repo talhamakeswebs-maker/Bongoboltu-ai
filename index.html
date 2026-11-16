@@ -2,8 +2,52 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="theme-color" content="#f7f7f5"><meta name="description" content="Abul AI. Bangla, English and bro-code conversations.">
-<title>Abul AI</title>
+<meta name="theme-color" content="#f7f7f5">
+<meta name="description" content="Chat with Abul AI in Bangla or English. A conversational AI assistant for asking questions, exploring ideas and everyday conversations.">
+<meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1">
+<link rel="canonical" href="https://abul-ai.vercel.app/">
+<link rel="icon" type="image/svg+xml" href="/abul-avatar.svg">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Abul AI">
+<meta property="og:title" content="Abul AI | Bangla and English AI Chat Assistant">
+<meta property="og:description" content="Talk with Abul AI in Bangla or English. Ask questions, explore ideas and have a conversation.">
+<meta property="og:url" content="https://abul-ai.vercel.app/">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Abul AI | Bangla and English AI Chat Assistant">
+<meta name="twitter:description" content="Talk with Abul AI in Bangla or English. Ask questions, explore ideas and have a conversation.">
+<title>Abul AI | Bangla and English AI Chat Assistant</title>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://abul-ai.vercel.app/#organization",
+      "name": "Abul AI",
+      "url": "https://abul-ai.vercel.app/",
+      "logo": "https://abul-ai.vercel.app/abul-avatar.svg"
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://abul-ai.vercel.app/#website",
+      "url": "https://abul-ai.vercel.app/",
+      "name": "Abul AI",
+      "description": "A conversational AI assistant with Bangla and English language options.",
+      "publisher": { "@id": "https://abul-ai.vercel.app/#organization" },
+      "inLanguage": ["en", "bn"]
+    },
+    {
+      "@type": "SoftwareApplication",
+      "@id": "https://abul-ai.vercel.app/#app",
+      "name": "Abul AI",
+      "url": "https://abul-ai.vercel.app/",
+      "applicationCategory": "CommunicationApplication",
+      "operatingSystem": "Web",
+      "description": "A conversational AI assistant with Bangla and English language options."
+    }
+  ]
+}
+</script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Hind+Siliguri:wght@400;500;600;700&display=swap');
 :root{--bg:#f7f7f5;--surface:#fff;--line:#e9e9e5;--text:#242521;--muted:#85867f;--accent:#315c48}
@@ -42,7 +86,7 @@ header{height:68px;padding:0 28px;border-bottom:1px solid var(--line);display:fl
 .send{width:36px;height:36px;border:0;border-radius:8px;background:var(--accent);color:white;font-size:18px;cursor:pointer}
 .send:disabled{opacity:.45;cursor:not-allowed}
 .foot{max-width:720px;margin:auto;display:flex;justify-content:space-between;align-items:center;color:#92938c;font-size:10px;padding:9px 3px 0}
-.foot a{display:none}
+.foot a{display:inline;color:#92938c;text-decoration:none;margin-right:10px}.foot a:hover{color:var(--text)}
 .credit{font-size:10px;color:#92938c;text-align:center;margin-top:9px}
 .hidden{display:none!important}
 @keyframes rise{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
@@ -71,7 +115,7 @@ header{height:68px;padding:0 28px;border-bottom:1px solid var(--line);display:fl
 <textarea id="prompt" rows="1" placeholder="Bolo bro, ki jante chao?" aria-label="Message"></textarea>
 <button class="send" id="send" aria-label="Send">↑</button>
 </form>
-<div class="foot"><span>Enter to send · Shift + Enter for a new line</span><span class="credit">Made by Talha Bhai</span></div>
+<div class="foot"><span>Enter to send · Shift + Enter for a new line</span><span><a href="/bangla-ai/">Bangla AI</a><a href="/features/">Features</a><a href="/about/">About</a><span class="credit">Made by Talha Bhai</span></span></div>
 </div>
 </main>
 </div>
