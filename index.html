@@ -55,7 +55,7 @@ header{height:68px;padding:0 28px;border-bottom:1px solid var(--line);display:fl
 <header>
 <div class="headtitle">Abul AI</div>
 <div class="controls">
-<button class="newchat" id="clearMemory" type="button" title="Clear saved Maliha conversation memory">Clear memory</button><button class="newchat" id="newChat" type="button">New chat</button>
+<button class="newchat" id="newChat" type="button">New chat</button>
 <label class="pill"><select id="language" aria-label="Language"><option value="both">বাংলা + English</option><option value="bn">বাংলা</option><option value="en">English</option></select></label>
 </div>
 </header>
@@ -158,7 +158,7 @@ form.addEventListener('submit',e=>{e.preventDefault();submit()});
 input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();submit()}});
 input.addEventListener('input',()=>{input.style.height='auto';input.style.height=Math.min(input.scrollHeight,130)+'px'});
 document.getElementById('newChat').addEventListener('click',()=>{history=[];malihaActive=false;malihaPending=false;sessionStarted=false;chat.querySelectorAll('.message').forEach(x=>x.remove());welcome.classList.remove('hidden');input.focus()});
-document.getElementById('clearMemory').addEventListener('click',()=>{if(window.confirm('Clear Abul’s saved Maliha conversation memory from this browser? This cannot be undone.')){clearMalihaMemory();window.alert('Saved browser memory cleared.');}});
+
 lang.addEventListener('change',()=>{input.placeholder=lang.value==='bn'?'আপনার প্রশ্ন লিখুন…':lang.value==='en'?'Talk to Abul…':'Bolo bro, ki jante chao?'});
 </script>
 </body>
