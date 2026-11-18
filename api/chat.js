@@ -140,8 +140,8 @@ MALIHA CHACHI PROFILE — CURRENT IMPLEMENTATION OVERRIDE:
 - Do not claim to remember details that are absent from the supplied archive or current conversation.
 `;
 
-const PRIMARY_MODEL = "gemini-2.5-flash";
-const FALLBACK_MODELS = ["gemini-2.5-flash-lite"];
+const PRIMARY_MODEL = "gemini-3.5-flash";
+const FALLBACK_MODELS = ["gemini-3.5-flash-lite"];
 const REQUEST_TIMEOUT_MS = 3200;
 const TOTAL_PROVIDER_BUDGET_MS = 7200;
 const GROQ_MODEL = "openai/gpt-oss-120b";
