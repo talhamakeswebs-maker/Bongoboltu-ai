@@ -129,6 +129,15 @@ const MALIHA_MEMORY_KEY='abul_maliha_archive_v1';
 let malihaActive=false;
 let malihaPending=false;
 let sessionStarted=false;
+let birthdayGreetingPending=false;
+function isMalihaBirthdayToday(){
+ const parts=new Intl.DateTimeFormat('en-US',{timeZone:'Asia/Dhaka',month:'numeric',day:'numeric'}).formatToParts(new Date());
+ return parts.find(part=>part.type==='month')?.value==='11'&&parts.find(part=>part.type==='day')?.value==='19';
+}
+function birthdayGreetingStorageKey(){
+ const year=new Intl.DateTimeFormat('en-US',{timeZone:'Asia/Dhaka',year:'numeric'}).format(new Date());
+ return 'abul_maliha_birthday_greeting_'+year;
+}
 function readMalihaArchive(){
  try{const value=JSON.parse(localStorage.getItem(MALIHA_MEMORY_KEY)||'[]');return Array.isArray(value)?value:[]}catch{return []}
 }
@@ -180,14 +189,16 @@ function addMessage(role,text,meta=''){
 function showTyping(){const row=document.createElement('div');row.className='message';row.id='typing';const av=document.createElement('div');av.className='avatar';const b=document.createElement('div');b.className='bubble typing';b.textContent=lang.value==='bn'?'ভাবছি…':'Thinking…';row.append(av,b);chat.append(row);chat.scrollTop=chat.scrollHeight}
 async function submit(q){
  q=(q||input.value).trim();if(!q||send.disabled)return;
+ const wasMalihaActive=malihaActive;
  if(!sessionStarted&&identifiesMaliha(q)){malihaPending=true;}else if(malihaPending&&confirmsMaliha(q)){malihaActive=true;malihaPending=false;}else if(identifiesMaliha(q)){malihaActive=true;malihaPending=false;}
+ if(!wasMalihaActive&&malihaActive&&isMalihaBirthdayToday()&&!localStorage.getItem(birthdayGreetingStorageKey()))birthdayGreetingPending=true;
  welcome.classList.add('hidden');input.value='';input.style.height='auto';addMessage('user',q);history.push({role:'user',content:q});send.disabled=true;showTyping();
  try{
   const controller=new AbortController();
   const requestTimeout=setTimeout(()=>controller.abort(),45000);
   let response;
   try{
-   response=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:history,language:lang.value,isMalihaSession:malihaActive,isMalihaCandidate:malihaPending,isNewSession:!sessionStarted,malihaMemory:malihaActive?getMalihaMemoryContext():''}),signal:controller.signal});
+   response=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:history,language:lang.value,isMalihaSession:malihaActive,isMalihaCandidate:malihaPending,isNewSession:!sessionStarted,isMalihaBirthdayGreeting:birthdayGreetingPending,malihaMemory:malihaActive?getMalihaMemoryContext():''}),signal:controller.signal});
   }finally{clearTimeout(requestTimeout)}
   const responseText=await response.text();
   let data={};
@@ -196,6 +207,7 @@ async function submit(q){
   if(!response.ok)throw new Error(data.error||'The AI could not respond.');
   const reply=data.reply||'I could not generate a response. Please try again.';
   history.push({role:'assistant',content:reply});addMessage('assistant',reply);
+  if(birthdayGreetingPending){try{localStorage.setItem(birthdayGreetingStorageKey(),'1')}catch{}birthdayGreetingPending=false;}
   sessionStarted=true;
   if(malihaActive)saveMalihaTurn();
  }catch(err){document.getElementById('typing')?.remove();const message=err.name==='AbortError'?'Taking too long, bro. Try again.':(err.message||'Connection error. Please try again.');addMessage('assistant',message);history.pop()}
