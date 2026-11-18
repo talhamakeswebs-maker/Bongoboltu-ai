@@ -140,15 +140,15 @@ MALIHA CHACHI PROFILE — CURRENT IMPLEMENTATION OVERRIDE:
 - Do not claim to remember details that are absent from the supplied archive or current conversation.
 `;
 
-const PRIMARY_MODEL = "gemini-2.5-flash";
-const FALLBACK_MODELS = ["gemini-2.5-flash-lite"];
+const PRIMARY_MODEL = "gemini-3.8-flash";
+const FALLBACK_MODELS = ["gemini-3.5-flash-lite"];
 const REQUEST_TIMEOUT_MS = 3200;
 const TOTAL_PROVIDER_BUDGET_MS = 7200;
 const GROQ_MODEL = "openai/gpt-oss-120b";
 const GROQ_TIMEOUT_MS = 3200;
-const MAX_MESSAGES = 12;
+const MAX_MESSAGES = 8;
 const MAX_MESSAGE_CHARS = 4000;
-const MAX_TOTAL_INPUT_CHARS = 12000;
+const MAX_TOTAL_INPUT_CHARS = 6000;
 
 function normalizeMessages(messages) {
   if (!Array.isArray(messages)) return null;
@@ -263,7 +263,7 @@ async function callGroq(apiKey, contents, language, systemPrompt = SYSTEM_PROMPT
       body: JSON.stringify({
         model: GROQ_MODEL,
         messages,
-        max_completion_tokens: 512,
+        max_completion_tokens: 256,
         reasoning_effort: "low"
       })
     });
@@ -437,10 +437,10 @@ module.exports = async function handler(req, res) {
       const providerError = result.data && result.data.error ? result.data.error : {};
       if (result.status === 429) {
         const limitReply = body.language === "bn"
-          ? "আরে ভাই, আমার ফ্রি কোটার পকেটও খালি! একটু বিরতি দে, চা খেয়ে আবার মাঠে নামি।"
+          ? "একটু বেশি request হয়ে গেছে, bro. কিছুক্ষণ পর আবার চেষ্টা কর—আমি ফিরে আসছি।"
           : body.language === "en"
-            ? "Bro, my free quota just tapped out. Even my brain needs a tea break. Give me a minute and try again."
-            : "Bro, amar free quota-o ar dhar dite raji na. Ektu cha kheye ashi, tarpor abar proshno-bomb marish.";
+            ? "Too many requests are coming in right now, bro. Give it a little moment and try again."
+            : "Ektu beshi request hoye geche, bro. Kichukhon por abar try kor—ami fire aschi.";
         return res.status(200).json({ reply: limitReply });
       }
       if (result.status === 400) {
