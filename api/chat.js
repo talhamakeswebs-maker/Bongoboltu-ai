@@ -142,10 +142,10 @@ MALIHA CHACHI PROFILE — CURRENT IMPLEMENTATION OVERRIDE:
 
 const PRIMARY_MODEL = "gemini-3.8-flash";
 const FALLBACK_MODELS = ["gemini-3.5-flash-lite"];
-const REQUEST_TIMEOUT_MS = 3200;
-const TOTAL_PROVIDER_BUDGET_MS = 7200;
-const GROQ_MODEL = "openai/gpt-oss-120b";
-const GROQ_TIMEOUT_MS = 3200;
+const REQUEST_TIMEOUT_MS = 3600;
+const TOTAL_PROVIDER_BUDGET_MS = 8500;
+const GROQ_MODEL = "groq/compound-mini";
+const GROQ_TIMEOUT_MS = 4200;
 const MAX_MESSAGES = 8;
 const MAX_MESSAGE_CHARS = 4000;
 const MAX_TOTAL_INPUT_CHARS = 6000;
@@ -263,8 +263,7 @@ async function callGroq(apiKey, contents, language, systemPrompt = SYSTEM_PROMPT
       body: JSON.stringify({
         model: GROQ_MODEL,
         messages,
-        max_completion_tokens: 256,
-        reasoning_effort: "low"
+        max_completion_tokens: 384
       })
     });
 
@@ -386,46 +385,41 @@ module.exports = async function handler(req, res) {
           : "";
     const requestSystemPrompt = SYSTEM_PROMPT + sessionPrompt;
 
-    // Gemini is the primary route. Groq is only used if Gemini is unavailable.
+    // Try Gemini once, then move quickly to an independent Groq route.
+    // Repeating the same Gemini model with another key does not help during
+    // provider-wide 503s/timeouts and previously consumed the whole function budget.
     let result = { ok: false, status: 503, data: {} };
     let providerUsed = "Gemini (not attempted)";
-
-    // Keep provider attempts inside the serverless execution budget.
-    const keyCandidates = [
-      { key: apiKey, name: "Gemini primary" },
-      { key: backupApiKey, name: "Gemini backup" }
-    ].filter((item, index, all) =>
-      item.key && all.findIndex((candidate) => candidate.key === item.key) === index
-    );
-    const modelCandidates = [PRIMARY_MODEL, ...FALLBACK_MODELS];
     const providerStartedAt = Date.now();
     const failedStatuses = [];
     let routeSucceeded = false;
 
-    if (!result.ok) {
-      for (const keyCandidate of keyCandidates) {
-        for (const model of modelCandidates) {
-          if (Date.now() - providerStartedAt >= TOTAL_PROVIDER_BUDGET_MS) break;
-          result = await callModel(model, keyCandidate.key, contents, language, requestSystemPrompt);
-          providerUsed = keyCandidate.name + " (" + model + ")";
-          if (result.ok) {
-            routeSucceeded = true;
-            break;
-          }
-          failedStatuses.push(result.status);
-          console.warn("Gemini route unavailable; trying next route", {
-            provider: providerUsed,
-            status: result.status
-          });
-        }
-        if (routeSucceeded || Date.now() - providerStartedAt >= TOTAL_PROVIDER_BUDGET_MS) break;
-      }
+    const primaryKey = apiKey || backupApiKey;
+    if (primaryKey) {
+      result = await callModel(PRIMARY_MODEL, primaryKey, contents, language, requestSystemPrompt);
+      providerUsed = apiKey ? "Gemini primary (" + PRIMARY_MODEL + ")" : "Gemini backup (" + PRIMARY_MODEL + ")";
+      routeSucceeded = result.ok;
+      if (!routeSucceeded) failedStatuses.push(result.status);
     }
 
-    if (!routeSucceeded && groqApiKey && Date.now() - providerStartedAt < TOTAL_PROVIDER_BUDGET_MS) {
+    // Use the backup Gemini key only for an authentication/permission failure,
+    // not for provider overload or a timeout.
+    if (!routeSucceeded && (result.status === 401 || result.status === 403) &&
+        apiKey && backupApiKey && backupApiKey !== apiKey &&
+        Date.now() - providerStartedAt < TOTAL_PROVIDER_BUDGET_MS) {
+      result = await callModel(PRIMARY_MODEL, backupApiKey, contents, language, requestSystemPrompt);
+      providerUsed = "Gemini backup (" + PRIMARY_MODEL + ")";
+      routeSucceeded = result.ok;
+      if (!routeSucceeded) failedStatuses.push(result.status);
+    }
+
+    // Compound Mini has a substantially larger published free-tier TPM ceiling
+    // than GPT-OSS 120B, so it is the independent fallback when Gemini is down.
+    if (!routeSucceeded && groqApiKey &&
+        Date.now() - providerStartedAt < TOTAL_PROVIDER_BUDGET_MS) {
       result = await callGroq(groqApiKey, contents, language, requestSystemPrompt);
       providerUsed = "Groq (" + GROQ_MODEL + ")";
-      failedStatuses.push(result.status);
+      if (!result.ok) failedStatuses.push(result.status);
       routeSucceeded = result.ok;
     }
 
