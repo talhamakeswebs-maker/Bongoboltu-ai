@@ -144,8 +144,8 @@ const PRIMARY_MODEL = "gemini-3.8-flash";
 const FALLBACK_MODELS = ["gemini-3.5-flash-lite"];
 const REQUEST_TIMEOUT_MS = 3600;
 const TOTAL_PROVIDER_BUDGET_MS = 8500;
-const GROQ_MODEL = "openai/gpt-oss-20b";
-const GROQ_TIMEOUT_MS = 4200;
+const GROQ_MODEL = "openai/gpt-oss-120b";
+const GROQ_TIMEOUT_MS = 4400;
 const MAX_MESSAGES = 8;
 const MAX_MESSAGE_CHARS = 4000;
 const MAX_TOTAL_INPUT_CHARS = 6000;
@@ -263,7 +263,7 @@ async function callGroq(apiKey, contents, language, systemPrompt = SYSTEM_PROMPT
       body: JSON.stringify({
         model: GROQ_MODEL,
         messages,
-        max_completion_tokens: 256
+        max_completion_tokens: 512
       })
     });
 
@@ -405,25 +405,31 @@ module.exports = async function handler(req, res) {
       "LANGUAGE PREFERENCE: " + language
     ].filter(Boolean).join("\\n\\n");
 
-    // Try Gemini once, then move quickly to an independent Groq route.
-    // Repeating the same Gemini model with another key does not help during
-    // provider-wide 503s/timeouts and previously consumed the whole function budget.
+    // Prefer the stronger GPT-OSS 120B route with a compact prompt.
+    // Gemini 3.8 Flash remains the independent fallback when Groq is unavailable.
     let result = { ok: false, status: 503, data: {} };
-    let providerUsed = "Gemini (not attempted)";
+    let providerUsed = "Groq (not attempted)";
     const providerStartedAt = Date.now();
     const failedStatuses = [];
     let routeSucceeded = false;
 
+    if (groqApiKey) {
+      result = await callGroq(groqApiKey, contents, language, groqSystemPrompt);
+      providerUsed = "Groq (" + GROQ_MODEL + ")";
+      routeSucceeded = result.ok;
+      if (!routeSucceeded) failedStatuses.push(result.status);
+    }
+
     const primaryKey = apiKey || backupApiKey;
-    if (primaryKey) {
+    if (!routeSucceeded && primaryKey &&
+        Date.now() - providerStartedAt < TOTAL_PROVIDER_BUDGET_MS) {
       result = await callModel(PRIMARY_MODEL, primaryKey, contents, language, requestSystemPrompt);
       providerUsed = apiKey ? "Gemini primary (" + PRIMARY_MODEL + ")" : "Gemini backup (" + PRIMARY_MODEL + ")";
       routeSucceeded = result.ok;
       if (!routeSucceeded) failedStatuses.push(result.status);
     }
 
-    // Use the backup Gemini key only for an authentication/permission failure,
-    // not for provider overload or a timeout.
+    // Retry the backup Gemini key only for authentication/permission failures.
     if (!routeSucceeded && (result.status === 401 || result.status === 403) &&
         apiKey && backupApiKey && backupApiKey !== apiKey &&
         Date.now() - providerStartedAt < TOTAL_PROVIDER_BUDGET_MS) {
@@ -431,16 +437,6 @@ module.exports = async function handler(req, res) {
       providerUsed = "Gemini backup (" + PRIMARY_MODEL + ")";
       routeSucceeded = result.ok;
       if (!routeSucceeded) failedStatuses.push(result.status);
-    }
-
-    // Compound Mini has a substantially larger published free-tier TPM ceiling
-    // than GPT-OSS 120B, so it is the independent fallback when Gemini is down.
-    if (!routeSucceeded && groqApiKey &&
-        Date.now() - providerStartedAt < TOTAL_PROVIDER_BUDGET_MS) {
-      result = await callGroq(groqApiKey, contents, language, groqSystemPrompt);
-      providerUsed = "Groq (" + GROQ_MODEL + ")";
-      if (!result.ok) failedStatuses.push(result.status);
-      routeSucceeded = result.ok;
     }
 
     if (!routeSucceeded && failedStatuses.length && failedStatuses.every((status) => status === 429)) {
@@ -499,6 +495,19 @@ module.exports = async function handler(req, res) {
       initialFinishReason === "SAFETY" ||
       initialFinishReason === "RECITATION" ||
       initialFinishReason === "BLOCKLIST";
+
+    if (!reply && !wasSafetyBlocked && providerUsed.startsWith("Groq") && primaryKey &&
+        Date.now() - providerStartedAt < TOTAL_PROVIDER_BUDGET_MS) {
+      console.warn("Groq returned no usable text; attempting Gemini fallback");
+      result = await callModel(PRIMARY_MODEL, primaryKey, contents, language, requestSystemPrompt);
+      providerUsed = "Gemini fallback (" + PRIMARY_MODEL + ")";
+      candidate = result.ok && result.data && Array.isArray(result.data.candidates)
+        ? result.data.candidates[0]
+        : null;
+      reply = candidate && candidate.content && Array.isArray(candidate.content.parts)
+        ? candidate.content.parts.map((part) => typeof part.text === "string" ? part.text : "").join("").trim()
+        : "";
+    }
 
     if (!reply && !wasSafetyBlocked && providerUsed.startsWith("Gemini primary") && backupApiKey) {
       console.warn("Primary Gemini key returned no usable text; attempting backup key");
