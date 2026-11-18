@@ -357,6 +357,26 @@ module.exports = async function handler(req, res) {
     const malihaMemory = isMalihaSession && typeof body.malihaMemory === "string"
       ? body.malihaMemory.slice(-12000)
       : "";
+
+    // Deliver the birthday surprise only after the client has identified
+    // this as Maliha's session, and only on November 19 in Bangladesh time.
+    const dhakaBirthdayParts = new Intl.DateTimeFormat("en-US", {
+      timeZone: "Asia/Dhaka",
+      month: "numeric",
+      day: "numeric"
+    }).formatToParts(new Date());
+    const dhakaBirthdayMonth = dhakaBirthdayParts.find((part) => part.type === "month")?.value;
+    const dhakaBirthdayDay = dhakaBirthdayParts.find((part) => part.type === "day")?.value;
+    if (isMalihaSession && body.isMalihaBirthdayGreeting === true &&
+        dhakaBirthdayMonth === "11" && dhakaBirthdayDay === "19") {
+      const birthdayReply = body.language === "bn"
+        ? "শুভ জন্মদিন, মালিহা চাচি!! 🎂💗\n\nতোমার জন্য তালহা একটা বিশেষ সারপ্রাইজ বানিয়েছে। এই নাও—শুধু তোমার জন্য:\nhttps://malihachachisbday.vercel.app\n\nসময় নিয়ে খুলে দেখো, চাচি। তোমার রিঅ্যাকশন কিন্তু জানতে চাই!"
+        : body.language === "en"
+          ? "HAPPY BIRTHDAY, MALIHA CHACHI!! 🎂💗\n\nTalha made a special little surprise just for you. Here it is:\nhttps://malihachachisbday.vercel.app\n\nGo have a look, Chachi. I really want to hear what you think!"
+          : "HAPPYYY BIRTHDAY, MALIHA CHACHI!! 🎂💗\n\nTalha tomar jonno ekta special surprise baniyeche. Ei nao—shudhu tomar jonno:\nhttps://malihachachisbday.vercel.app\n\nJaao, Chachi, open kore dekho! Tomar reaction kintu shunte chai.";
+      return res.status(200).json({ reply: birthdayReply });
+    }
+
     const sessionPrompt = isMalihaSession
       ? "\n\nCURRENT SESSION IDENTITY: The user has confirmed she is Maliha Chachi.\nPRIOR MALIHA CONVERSATION ARCHIVE (browser-local; use only as relevant context):\n" + (malihaMemory || "No previous archive is available yet.")
       : isNewSession && isMalihaCandidate
